@@ -1,9 +1,9 @@
 module Enron (
     Employee(..),
-    employeeToActor,
+    actorFromEmployee,
 
     Email(..),
-    emailToMessage,
+    messageFromEmail,
     
     fetchEmployeeList',
     fetchEmailList',
@@ -15,7 +15,6 @@ import Database.HDBC.Sqlite3
 
 import Data.Map( Map )
 import qualified Data.Map as Map
-import Data.Maybe( fromJust )
 
 import Numeric.LinearAlgebra
 
@@ -38,8 +37,8 @@ data Employee =
              }
         deriving (Eq, Show)
 
-employeeToActor :: Employee -> Actor
-employeeToActor (Employee eid _ _ _ g s d) =
+actorFromEmployee :: Employee -> Actor
+actorFromEmployee (Employee eid _ _ _ g s d) =
     let f = if g == Female then 1 else 0
         j = if s == Junior then 1 else 0
         l = if d == Legal then 1 else 0
@@ -59,8 +58,8 @@ data Email =
           }
         deriving (Eq, Show)
 
-emailToMessage :: Email -> Message
-emailToMessage (Email eid _ time _ f tos) =
+messageFromEmail :: Email -> Message
+messageFromEmail (Email eid _ time _ f tos) =
     Message eid time f tos
 
 fetchEmployeeList' :: (IConnection conn) => conn -> IO [Employee]

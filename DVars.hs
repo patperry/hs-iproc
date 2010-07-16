@@ -23,7 +23,7 @@ module DVars (
 import Control.Monad.ST
 import Data.IntMap( IntMap )
 import qualified Data.IntMap as IntMap
-import Data.Maybe( fromJust, listToMaybe )
+import Data.Maybe( listToMaybe )
 import Numeric.LinearAlgebra
 
 import Actor
@@ -32,8 +32,8 @@ import Message
 type Intervals = Vector DiffTime
 type IntervalId = Int        
 data DVars = 
-    DVars { sendIntervals :: !Intervals
-          , recvIntervals :: !Intervals
+    DVars { dvarsSendIntervals :: !Intervals
+          , dvarsRecvIntervals :: !Intervals
           }
           
 dvarsWithIntervals :: Intervals
@@ -109,9 +109,11 @@ emptyDVarsState t0 dvars = DVarsState t0 dvars IntMap.empty
 advanceDVarsStateTo :: Time -> DVarsState -> DVarsState
 advanceDVarsStateTo t (DVarsState _ d am) = (DVarsState t d am)
 
-dvarsStateOf :: Actor -> DVarsState -> ActorState
-dvarsStateOf a (DVarsState t _ am) =
-    advanceActorStateTo t $ fromJust $ IntMap.lookup (actorId a) am
+dvarsStateOf :: ActorId -> DVarsState -> ActorState
+dvarsStateOf a (DVarsState t dv am) =
+    advanceActorStateTo t $ IntMap.findWithDefault empty a am
+  where
+    empty = emptyActorState t dv
 
 updateDVarsState :: Message -> DVarsState -> DVarsState
 updateDVarsState (Message _ time f ts) (DVarsState _ dvars am) =

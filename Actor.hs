@@ -21,7 +21,6 @@ module Actor (
 
 import Data.IntMap( IntMap )
 import qualified Data.IntMap as IntMap
-import Data.Maybe( fromJust )
 
 import Numeric.LinearAlgebra( Vector )
 
@@ -49,11 +48,11 @@ actorSet as = ActorSet (length as)
                        (IntMap.fromAscList $ zip [ 0.. ] as)
                        (IntMap.fromList $ zip (map actorId as) [ 0.. ])
 
-actorIndex :: Actor -> ActorSet -> Int
-actorIndex a (ActorSet _ _ idx) = fromJust $ IntMap.lookup (actorId a) idx
+actorIndex :: Actor -> ActorSet -> Maybe Int
+actorIndex a (ActorSet _ _ idx) = IntMap.lookup (actorId a) idx
 
-actorAt :: Int -> ActorSet -> Actor
-actorAt i (ActorSet _ as _) = fromJust $ IntMap.lookup i as
+actorAt :: Int -> ActorSet -> Maybe Actor
+actorAt i (ActorSet _ as _) = IntMap.lookup i as
 
 actorCount :: ActorSet -> Int
 actorCount (ActorSet n _ _) = n

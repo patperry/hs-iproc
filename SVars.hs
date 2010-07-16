@@ -12,7 +12,7 @@ import Data.Function( on )
 import Data.IntMap( IntMap )
 import qualified Data.IntMap as IntMap
 import Data.List( sortBy )
-import Data.Maybe( fromJust )
+import Text.Printf
 import Numeric.LinearAlgebra
 
 import Actor
@@ -41,4 +41,6 @@ svarsOutOf :: SenderId -> SVars -> [(ReceiverId, Vector Double)]
 svarsOutOf s (SVars _ m) = IntMap.findWithDefault [] s m
 
 svarsDyad :: SenderId -> ReceiverId -> SVars -> Vector Double
-svarsDyad s r vars = fromJust $ lookup r (svarsOutOf s vars)
+svarsDyad s r vars = case lookup r (svarsOutOf s vars) of
+    Just x -> x
+    Nothing -> error $ printf "svarsDyad %d %d: no such dyad" s r

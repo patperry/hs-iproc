@@ -31,6 +31,3 @@ updateDynDeriv prob (sh,rh) (STDynDeriv send recv cross) = do
         p <- readVector prob j
         updateVector recv r (p+)
       
-sendIntervals :: Vector DiffTime
-sendIntervals =
-    listVector 23 $ map (floor . (3600*) . (2^^)) [(-11)..(11 :: Int)]
