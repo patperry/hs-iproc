@@ -7,6 +7,7 @@ module DVars (
     DVarsState,
     emptyDVarsState,
     updateDVarsState,
+    logMessage,
     advanceDVarsStateTo,
     dvarsStateOf,
     
@@ -115,17 +116,17 @@ dvarsStateOf a (DVarsState t dv am) =
   where
     empty = emptyActorState t dv
 
-updateDVarsState :: Message -> DVarsState -> DVarsState
-updateDVarsState (Message _ time f ts) (DVarsState _ dvars am) =
-    let def  = emptyActorState time dvars
-        a_f  = logSends ts . advanceActorStateTo time $
-                    IntMap.findWithDefault def f am
-        a_ts = [ logRecv f . advanceActorStateTo time $
-                        IntMap.findWithDefault def t am
-               | t <- ts ]
+logMessage :: (Int, [Int]) -> DVarsState -> DVarsState
+logMessage (f,ts) (DVarsState time dvars am) =
+    let def = emptyActorState time dvars
+        a_f  = logSends ts $ IntMap.findWithDefault def f am
+        a_ts = [ logRecv f $ IntMap.findWithDefault def t am | t <- ts ]
         am'  = foldr (\(k,v) -> v `seq` IntMap.insert k v) am $
                    (f,a_f):(zip ts a_ts)
     in DVarsState time dvars am'
   where
     logSends = flip (foldr logSend)
-    
+
+updateDVarsState :: Message -> DVarsState -> DVarsState
+updateDVarsState (Message _ time f ts) =
+    logMessage (f,ts) . advanceDVarsStateTo time
