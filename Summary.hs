@@ -5,7 +5,7 @@ module Summary (
     listSummary,
     ) where
 
-import Data.List( foldl', mapAccumR )       
+import Data.List( foldl' )       
 import Data.Map( Map )
 import qualified Data.Map as Map
 
@@ -29,12 +29,6 @@ data Summary =
             , recvIntervalsCount :: !(Map IntervalId Int)
             }
 
-messageHistory :: DVarsState -> [Message] -> (DVarsState, [DVarsState])
-messageHistory =
-    mapAccumR (\h0 m -> 
-        let h  = advanceDVarsStateTo (messageTime m) h0
-            h' = logMessage (messageFrom m, messageTo m) h
-        in (h',h))
 
 listSummary :: SVars -> DVars -> Time -> [Message] -> Summary
 listSummary sv dv t0 ms =

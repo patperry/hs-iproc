@@ -9,6 +9,7 @@ module DVars (
     updateDVarsState,
     logMessage,
     advanceDVarsStateTo,
+    messageHistory,
     dvarsStateOf,
     
     ActorState,
@@ -24,6 +25,7 @@ module DVars (
 import Control.Monad.ST
 import Data.IntMap( IntMap )
 import qualified Data.IntMap as IntMap
+import Data.List( mapAccumR )
 import Data.Maybe( listToMaybe )
 import Numeric.LinearAlgebra
 
@@ -130,3 +132,10 @@ logMessage (f,ts) (DVarsState time dvars am) =
 updateDVarsState :: Message -> DVarsState -> DVarsState
 updateDVarsState (Message _ time f ts) =
     logMessage (f,ts) . advanceDVarsStateTo time
+
+messageHistory :: DVarsState -> [Message] -> (DVarsState, [DVarsState])
+messageHistory =
+    mapAccumR (\h0 m -> 
+        let h  = advanceDVarsStateTo (messageTime m) h0
+            h' = logMessage (messageFrom m, messageTo m) h
+        in (h',h))
