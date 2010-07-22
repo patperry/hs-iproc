@@ -20,6 +20,8 @@ data SenderDev =
               , staticLogWeight :: !(Map ReceiverId Double)
               , staticWeightSum :: !Double
               , deviance :: !Double
+              , staticProbTotal :: !Double
+              , dynamicProb :: !(Map ReceiverId Double)
               , sendIWeight :: !(Map IntervalId Double)
               , recvIWeight :: !(Map IntervalId Double)
               , sendIRecvICross :: !(Map (IntervalId,IntervalId) Double)
@@ -32,11 +34,11 @@ emptySenderDev sv _dv p s = let
                       , validDyad p s r
                       ]
     ws = (sum . map exp) $ Map.elems lw
-    in SenderDev p lw ws 0 Map.empty Map.empty Map.empty
+    in SenderDev p lw ws 0 0 Map.empty Map.empty Map.empty Map.empty
 
 updateSenderDev :: SenderDev -> ([ReceiverId], ActorState) -> SenderDev
-updateSenderDev (SenderDev p slw sum_w dev iw_send iw_recv iw_cross)
-                  (tos,h) = let
+updateSenderDev (SenderDev p slw sum_w dev s_prob d_prob iw_send iw_recv iw_cross)
+                (tos,h) = let
     l = realToFrac $ length tos
     h_send = recentEvents $ sendHistory h
     h_recv = recentEvents $ recvHistory h
@@ -55,6 +57,12 @@ updateSenderDev (SenderDev p slw sum_w dev iw_send iw_recv iw_cross)
 
     dev' = dev - 2 * sum [ log (Map.findWithDefault 0 to prob) | to <- tos ]
     
+    s_prob' = s_prob + sum_w / sum_w'
+    
+    d_prob' = foldl' (\acc (r,lw) ->
+                         Map.insertWith' (+) r (exp lw / sum_w') acc)
+                     d_prob $ Map.assocs dlw
+    
     iw_send' = updateEventWeights wt iw_send h_send
     iw_recv' = updateEventWeights wt iw_recv h_recv
     
@@ -63,7 +71,7 @@ updateSenderDev (SenderDev p slw sum_w dev iw_send iw_recv iw_cross)
                         (Map.fromList h_send)
                         (Map.fromList h_recv)
 
-    in SenderDev p slw sum_w dev' iw_send' iw_recv' iw_cross'
+    in SenderDev p slw sum_w dev' s_prob' d_prob' iw_send' iw_recv' iw_cross'
   where
     coefMap coef =
         Map.fromList . map (second $ \int -> atVector coef int)
