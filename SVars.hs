@@ -1,46 +1,53 @@
 module SVars (
-    SVars,
-    svarsCount,
+    SVars( dim, senders, receivers ),
+
+    lookupSender,
+    lookupDyad,
     
-    allDyadVars,
-    svarsWith,
-    svarsOutOf,
-    svarsDyad,
+    fromLists,
+    -- fromListsWith,
+    interactions,
   ) where
    
 import Data.Function( on )
 import Data.IntMap( IntMap )
 import qualified Data.IntMap as IntMap
 import Data.List( sortBy )
-import Text.Printf
 import Numeric.LinearAlgebra
 
 import Actor
 
 
 data SVars = 
-    SVars { svarsCount :: !Int
+    SVars { dim :: !Int
           , varMap :: !(IntMap [(ReceiverId, Vector Double)])
+          , senders :: [Sender]
+          , receivers :: [Receiver]
           }
 
-allDyadVars :: Sender -> Receiver -> Vector Double
-allDyadVars s r = (actorVars r) `kroneckerVector` (actorVars s)
+interactions :: Sender -> Receiver -> Vector Double
+interactions s r = (actorVars r) `kroneckerVector` (actorVars s)
 
-svarsWith :: (Sender -> Receiver -> Vector Double)
-          -> [Sender]
-          -> [Receiver]
-          -> SVars
-svarsWith f ss rs =
-    let p = dimVector $ f (head ss) (head rs)
-        m = IntMap.fromList
-                [ (actorId s, [ (actorId r, f s r) | r <- rs ])
-                | s <- ss ]
-    in SVars p m
+fromLists :: [Sender] -> [Receiver] -> SVars
+fromLists = fromListsWith interactions
 
-svarsOutOf :: SenderId -> SVars -> [(ReceiverId, Vector Double)]
-svarsOutOf s (SVars _ m) = IntMap.findWithDefault [] s m
+fromListsWith :: (Sender -> Receiver -> Vector Double)
+              -> [Sender]
+              -> [Receiver]
+              -> SVars
+fromListsWith f ss rs | null ss = error "empty Sender list"
+                      | null rs = error "empty Receiver list"
+                      | otherwise = let
+    p = dimVector $ f (head ss) (head rs)
+    m = IntMap.fromList
+            [ (actorId s, [ (actorId r, f s r) | r <- rs ])
+            | s <- ss ]
+    in SVars p m ss rs
 
-svarsDyad :: SenderId -> ReceiverId -> SVars -> Vector Double
-svarsDyad s r vars = case lookup r (svarsOutOf s vars) of
-    Just x -> x
-    Nothing -> error $ printf "svarsDyad %d %d: no such dyad" s r
+lookupSender :: SenderId -> SVars -> Maybe [(ReceiverId, Vector Double)]
+lookupSender s (SVars _ m _ _) = IntMap.lookup s m
+
+lookupDyad :: (SenderId, ReceiverId) -> SVars -> Maybe (Vector Double)
+lookupDyad (s,r) svars = do
+    rs <- lookupSender s svars
+    lookup r rs
