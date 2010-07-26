@@ -28,8 +28,8 @@ fromList as = ActorSet (length as)
                        (IntMap.fromAscList $ zip [ 0.. ] as)
                        (IntMap.fromList $ zip (map actorId as) [ 0.. ])
 
-lookup :: Actor -> ActorSet -> Maybe Int
-lookup a (ActorSet _ _ idx) = IntMap.lookup (actorId a) idx
+lookup :: ActorId -> ActorSet -> Maybe Int
+lookup aid (ActorSet _ _ idx) = IntMap.lookup aid idx
 
 at :: Int -> ActorSet -> Maybe Actor
 at i (ActorSet _ as _) = IntMap.lookup i as

@@ -71,7 +71,7 @@ prop_ActorSet_size_fromList (UniqueActorList as) =
     
 prop_ActorSet_lookup_fromList (UniqueActorList as) = let
     a_set = ActorSet.fromList as
-    in and [ ActorSet.lookup a a_set == Just i
+    in and [ ActorSet.lookup (actorId a) a_set == Just i
            | (i,a) <- zip [ 0.. ] as 
            ]
 
