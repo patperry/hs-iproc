@@ -16,6 +16,9 @@ import Database.HDBC.Sqlite3
 import Data.Map( Map )
 import qualified Data.Map as Map
 
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
+
 import Numeric.LinearAlgebra
 
 import Actor( Actor(..) )
@@ -51,7 +54,7 @@ type UnixTime = Int
 data Email =
     Email { emailId :: !EmailId
           , emaileFilename :: !String
-          , emailTime :: !UnixTime
+          , emailTime :: !UTCTime
           , emailSubject :: !String
           , emailFrom :: !EmployeeId
           , emailToList :: ![EmployeeId]
@@ -138,7 +141,7 @@ fetchEmailList' conn = do
                    ] =
         Email (fromSql mid)
               (fromSql filename)
-              (fromSql unix_time)
+              (posixSecondsToUTCTime $ fromSql unix_time)
               (fromSql subject)
               (fromSql from_eid)
               (tos $ fromSql mid)

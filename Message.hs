@@ -1,16 +1,16 @@
-module Message 
-    where
+module Message (
+    Message(..)
+    ) where
 
+import Data.Time
 import Actor
 
 type MessageId = Int
-type Time = Int
-type DiffTime = Int
 
 data Message =
     Message { messageId :: !MessageId
-            , messageTime :: !Time
-            , messageFrom :: !ActorId
-            , messageTo :: ![ActorId]
+            , messageTime :: !UTCTime
+            , messageFrom :: !SenderId
+            , messageTo :: ![ReceiverId]
             }
-    deriving (Show)
+    deriving (Eq, Show)
