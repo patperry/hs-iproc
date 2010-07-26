@@ -64,26 +64,26 @@ advanceTo :: (Ord e) => UTCTime -> History e -> History e
 advanceTo t h@(History iset t0 past cur) | t == t0 = h
                                          | t < t0 = error "negative time difference"
                                          | otherwise = let
-    delta = realToFrac $ t `diffUTCTime` t0
+    dt = realToFrac $ t `diffUTCTime` t0
     iset_assocs = IntervalSet.assocs iset
     past' = flip Map.mapMaybe past $ \(EventDiffTime i d) ->
-                let d'  = d + delta
+                let d'  = d + dt
                     id' = listToMaybe [ EventDiffTime int_id d'
                                       | (int_id, int) <- drop i iset_assocs
                                       , d' <= int ]
                 in id'
-    past'' = case IntervalSet.lookup delta iset of
+    past'' = case IntervalSet.lookup dt iset of
                  Nothing -> past'
                  Just i0 ->
-                    Set.fold (\e -> Map.insert e $ EventDiffTime i0 delta)
+                    Set.fold (\e -> Map.insert e $ EventDiffTime i0 dt)
                              past'
                              cur
                              
     in History iset t past'' Set.empty
 
 advanceBy :: (Ord e) => DiffTime -> History e -> History e
-advanceBy delta h | delta == 0 = h
-                  | delta < 0 = error "negative time difference"
-                  | otherwise = let
-    t = (realToFrac delta) `addUTCTime` (time h)
+advanceBy dt h | dt == 0 = h
+               | dt < 0 = error "negative time difference"
+               | otherwise = let
+    t = realToFrac dt `addUTCTime` time h
     in advanceTo t h
