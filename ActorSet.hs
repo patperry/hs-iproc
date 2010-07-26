@@ -14,6 +14,7 @@ module ActorSet (
 import Prelude hiding ( lookup )
 import Data.IntMap( IntMap )
 import qualified Data.IntMap as IntMap
+import Data.Maybe( fromJust )
 
 import Actor
 
@@ -31,8 +32,11 @@ fromList as = ActorSet (length as)
 lookup :: ActorId -> ActorSet -> Maybe Int
 lookup aid (ActorSet _ _ idx) = IntMap.lookup aid idx
 
-at :: Int -> ActorSet -> Maybe Actor
-at i (ActorSet _ as _) = IntMap.lookup i as
+at :: Int -> ActorSet -> Actor
+at i (ActorSet n as _) | i < 0 = error "negative index"
+                       | i >= n = error "index too large"
+                       | otherwise =
+    fromJust $ IntMap.lookup i as
 
 size :: ActorSet -> Int
 size (ActorSet n _ _) = n
