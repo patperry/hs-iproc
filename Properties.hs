@@ -291,7 +291,7 @@ tests_History = testGroup "History"
     
 prop_History_pastEvents h =
     History.pastEvents h
-        == map (\(dt,e) -> (fromJust $ IntervalSet.lookup dt iset, e))
+        == map (\(e,dt) -> (e, fromJust $ IntervalSet.lookup dt iset))
                (History.pastEventsWithTimes h)
   where
     iset = History.intervalSet h
@@ -307,11 +307,11 @@ prop_History_currentEvents_insert h e =
 prop_History_pastEvents_advanceBy h (NonNegative dt) =
     sort ((History.pastEvents . History.advanceBy dt) h)
         == 
-            (sort . nubBy ((==) `on` snd))
-                 (mapMaybe (\e -> (,e) `fmap` IntervalSet.lookup dt iset)
+            (sort . nubBy ((==) `on` fst))
+                 (mapMaybe (\e -> (e,) `fmap` IntervalSet.lookup dt iset)
                            (History.currentEvents h)
                   ++
-                  mapMaybe (\(t,e) -> ((,e) `fmap` IntervalSet.lookup (t+dt) iset))
+                  mapMaybe (\(e,t) -> ((e,) `fmap` IntervalSet.lookup (t+dt) iset))
                            (History.pastEventsWithTimes h)
                  )
   where

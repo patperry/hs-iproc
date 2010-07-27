@@ -52,15 +52,15 @@ lookup e h = unEventDiffTime `fmap` Map.lookup e (pastEventMap h)
 currentEvents :: History e -> [e]
 currentEvents = Set.elems . currentEventSet
 
-pastEvents :: History e -> [(IntervalId, e)]
+pastEvents :: History e -> [(e, IntervalId)]
 pastEvents = map unEventDiffTime . Map.assocs . pastEventMap
   where
-    unEventDiffTime (e, EventDiffTime i _) = (i, e)
+    unEventDiffTime (e, EventDiffTime i _) = (e, i)
 
-pastEventsWithTimes :: History e -> [(DiffTime, e)]
+pastEventsWithTimes :: History e -> [(e, DiffTime)]
 pastEventsWithTimes = map unEventDiffTime . Map.assocs . pastEventMap
   where
-    unEventDiffTime (e, EventDiffTime _ t) = (t, e)
+    unEventDiffTime (e, EventDiffTime _ t) = (e, t)
 
 advanceTo :: (Ord e) => UTCTime -> History e -> History e
 advanceTo t h@(History iset t0 past cur) | t == t0 = h
