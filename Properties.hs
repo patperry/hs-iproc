@@ -14,10 +14,13 @@ import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.LinearAlgebra as Test
 import Numeric.LinearAlgebra
 
-import Actor( Actor(..) )
+import Actor( Actor(..), SenderId, ReceiverId )
 
 import ActorSet( ActorSet )
 import qualified ActorSet as ActorSet
+
+import DVars( DVars )
+import qualified DVars as DVars
 
 import History( History )
 import qualified History as History
@@ -116,19 +119,19 @@ instance Arbitrary EmptyHistory where
         t0 <- arbitrary
         return $ EmptyHistory iset t0
 
-data UpdateHistory e = AdvanceBy DiffTime
-                     | Insert e
+data UpdateHistory e = HistoryAdvanceBy DiffTime
+                     | HistoryInsert e
     deriving (Eq, Show)
     
 updateHistory :: (Ord e) => UpdateHistory e -> History e -> History e
-updateHistory (AdvanceBy dt) = History.advanceBy dt
-updateHistory (Insert e) = History.insert e
+updateHistory (HistoryAdvanceBy dt) = History.advanceBy dt
+updateHistory (HistoryInsert e) = History.insert e
     
 instance (Arbitrary e, Ord e) => Arbitrary (UpdateHistory e) where
     arbitrary = do
         dt <- fmap abs arbitrary
         e <- arbitrary
-        elements [ AdvanceBy dt, Insert e]
+        elements [ HistoryAdvanceBy dt, HistoryInsert e]
 
 instance (Arbitrary e, Ord e) => Arbitrary (History e) where
     arbitrary = do
@@ -136,6 +139,47 @@ instance (Arbitrary e, Ord e) => Arbitrary (History e) where
         us <- arbitrary
         return $ foldr updateHistory (History.empty iset t0) us
 
+
+data EmptyDVars = EmptyDVars IntervalSet IntervalSet UTCTime
+    deriving (Eq, Show)
+
+instance Arbitrary EmptyDVars where
+    arbitrary = do
+        send_iset <- arbitrary
+        recv_iset <- arbitrary
+        t0 <- arbitrary
+        return $ EmptyDVars send_iset recv_iset t0
+
+data UpdateDVars = DVarsAdvanceBy DiffTime
+                 | DVarsInsert (SenderId,[ReceiverId])
+    deriving (Eq, Show)
+    
+updateDVars :: UpdateDVars -> DVars -> DVars
+updateDVars (DVarsAdvanceBy dt) = DVars.advanceBy dt
+updateDVars (DVarsInsert m) = DVars.insert m
+    
+instance Arbitrary UpdateDVars where
+    arbitrary = do
+        dt <- fmap abs arbitrary
+        m <- arbitrary
+        elements [ DVarsAdvanceBy dt, DVarsInsert m ]
+
+instance Arbitrary DVars where
+    arbitrary = do
+        (EmptyDVars sint rint t0) <- arbitrary
+        us <- arbitrary
+        return $ foldr updateDVars (DVars.empty sint rint t0) us
+
+data DVarsWithSender = DVarsWithSender SenderId DVars deriving (Show)
+instance Arbitrary DVarsWithSender where
+    arbitrary = do
+        dvars <- arbitrary
+        us <- arbitrary
+        s <- elements $ (0:) $ concat $ flip mapMaybe us $ \u ->
+                 case u of
+                     DVarsAdvanceBy _ -> Nothing
+                     DVarsInsert (s,rs) -> Just $ s:rs
+        return $ DVarsWithSender s $ foldr updateDVars dvars us
 
 tests_ActorSet = testGroup "ActorSet"
     [ testProperty "size . fromList" prop_ActorSet_size_fromList
@@ -326,11 +370,20 @@ prop_History_lookup_advanceBy_insert h e dt =
   where
     dt' = abs dt + picosecondsToDiffTime 1
     _ = e :: Int
-        
+
+
+tests_DVars = testGroup "DVars"
+        [ testProperty "lookupSender" prop_DVars_lookupSender
+        ]
+
+prop_DVars_lookupSender (DVarsWithSender s dvars) = let
+    xs = DVars.lookupSender s dvars
+    in xs == [ (r, fromJust $ DVars.lookupDyad (s,r) dvars) | (r,_) <- xs ]
     
 main :: IO ()
 main = defaultMain [ tests_ActorSet
                    , tests_SVars
                    , tests_IntervalSet
                    , tests_History
+                   , tests_DVars
                    ]

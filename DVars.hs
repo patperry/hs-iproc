@@ -1,141 +1,105 @@
 module DVars (
-    Intervals,
-    IntervalId,
-    DVars(..),
-    dvarsWithIntervals,
+    DVars( sendIntervals, receiveIntervals, time ),
+    empty,
+    insert,
+    advanceTo,
+    advanceBy,
     
-    DVarsState,
-    emptyDVarsState,
-    updateDVarsState,
-    logMessage,
-    advanceDVarsStateTo,
-    messageHistory,
-    dvarsStateOf,
-    
-    ActorState,
-    currentTime,
-    sendHistory,
-    recvHistory,
-
-    History,
-    recentEvents,
-    lastEventOf,
+    DVar(..),
+    lookupSender,
+    lookupDyad,
     ) where
         
-import Control.Monad.ST
-import Data.IntMap( IntMap )
-import qualified Data.IntMap as IntMap
-import Data.List( mapAccumR )
-import Data.Maybe( listToMaybe )
-import Numeric.LinearAlgebra
+import Control.Arrow( second )
+import Data.Map( Map )
+import qualified Data.Map as Map
+import Data.Time
 
 import Actor
-import Message
+import IntervalSet( IntervalSet, IntervalId )
+import qualified IntervalSet as IntervalSet
+import History( History )
+import qualified History as History
 
-type Intervals = Vector DiffTime
-type IntervalId = Int        
-data DVars = 
-    DVars { dvarsSendIntervals :: !Intervals
-          , dvarsRecvIntervals :: !Intervals
-          }
+data ActorHistory = ActorHistory !(History ReceiverId) !(History SenderId)
+
+data DVars =
+    DVars { sendIntervals :: !IntervalSet
+          , receiveIntervals :: !IntervalSet
+          , time :: !UTCTime
+          , senderHistoryMap :: !(Map SenderId (History ReceiverId))
+          , receiverHistoryMap :: !(Map ReceiverId (History SenderId))
+          } deriving (Show)
+
+empty :: IntervalSet -> IntervalSet -> UTCTime -> DVars
+empty sint rint t0 = DVars sint rint t0 Map.empty Map.empty
           
-dvarsWithIntervals :: Intervals
-                   -> Intervals
-                   -> DVars
-dvarsWithIntervals = DVars
+advanceTo :: UTCTime -> DVars -> DVars
+advanceTo t' dvars@(DVars sint rint t shm rhm) | t' < t = error "negative time difference"
+                                               | t' == t = dvars
+                                               | otherwise =
+    DVars sint rint t' shm rhm
 
+advanceBy :: DiffTime -> DVars -> DVars
+advanceBy dt dvars | dt == 0 = dvars
+                   | dt < 0 = error "negative time difference"
+                   | otherwise = let
+    t = realToFrac dt `addUTCTime` time dvars
+    in advanceTo t dvars
 
-data History = History !Intervals !(IntMap (DiffTime, IntervalId))
-
-recentEvents :: History -> [(ActorId, IntervalId)]
-recentEvents (History _ m) = [ (i, int) | (i,(_,int)) <- IntMap.assocs m ]
-
-lastEventOf :: ActorId -> History -> Maybe IntervalId
-lastEventOf a (History _ m) = do
-    (_,int) <- IntMap.lookup a m
-    return int
-
-emptyHistory :: Vector DiffTime -> History
-emptyHistory ints = History ints IntMap.empty
-
-logEvent :: Int -> History -> History
-logEvent i (History ints recent) =
-    History ints (IntMap.insert i (0,0) recent)
-
-advanceTimeBy :: DiffTime -> History -> History
-advanceTimeBy delta h@(History ints recent)
-    | delta == 0 = h
-    | otherwise =
-        let assocs = assocsVector ints
-            recent' = flip IntMap.mapMaybe recent $ \(d,i) -> do
-                          let d' = d + delta
-                          i' <- listToMaybe [ i'
-                                            | (i',int) <- drop i assocs
-                                            , d' <= int
-                                            ]
-                          i' `seq` return (d',i')
-        in History ints recent'                    
-
-data ActorState =
-    ActorState { currentTime :: !Time
-               , sendHistory :: !History
-               , recvHistory :: !History
-               }
-
-emptyActorState :: Time -> DVars -> ActorState
-emptyActorState t0 (DVars sints rints) =
-    ActorState t0 (emptyHistory sints) (emptyHistory rints)
-
-advanceActorStateTo :: Time -> ActorState -> ActorState
-advanceActorStateTo t' a@(ActorState t sh rh) | t' == t = a
-                                              | otherwise =
-    let delta = t' - t
-        [ sh', rh' ] = map (advanceTimeBy delta) [ sh, rh ]
-    in ActorState t' sh' rh'
-
-logSend :: ActorId -> ActorState -> ActorState
-logSend to (ActorState t sh rh) =
-    let sh' = logEvent to sh
-    in ActorState t sh' rh
+insert :: (SenderId, [ReceiverId]) -> DVars -> DVars
+insert (s,rs) (DVars sint rint t shm rhm) = let
+    shm' = updateHistoryMap sint (s,rs) shm
+    rhm' = foldr (updateHistoryMap rint) rhm (zip rs $ repeat [s])
+    in DVars sint rint t shm' rhm'
+  where
+    updateHistoryMap int (x,ys) hm = let
+        h = History.advanceTo t $
+                 Map.findWithDefault (History.empty int t) x hm
+        h' = foldr History.insert h ys
+        in Map.insert x h' hm
     
-logRecv :: ActorId -> ActorState -> ActorState
-logRecv from (ActorState t sh rh) =
-    let rh' = logEvent from rh
-    in ActorState t sh rh'
+senderHistory :: SenderId -> DVars -> History ReceiverId
+senderHistory s (DVars sint _ t shm _) = 
+    History.advanceTo t $
+        Map.findWithDefault (History.empty sint t) s shm
 
-                    
-data DVarsState = DVarsState !Time !DVars !(IntMap ActorState)
+receiverHistory :: ReceiverId -> DVars -> History SenderId
+receiverHistory r (DVars _ rint t _ rhm) = 
+    History.advanceTo t $
+        Map.findWithDefault (History.empty rint t) r rhm
 
-emptyDVarsState :: Time -> DVars -> DVarsState
-emptyDVarsState t0 dvars = DVarsState t0 dvars IntMap.empty
+data DVar = Send !IntervalId
+          | Receive !IntervalId
+          | SendAndReceive !IntervalId !IntervalId
+    deriving (Eq, Show)
 
-advanceDVarsStateTo :: Time -> DVarsState -> DVarsState
-advanceDVarsStateTo t (DVarsState _ d am) = (DVarsState t d am)
+sendIntervalId :: DVar -> Maybe IntervalId
+sendIntervalId dvar = case dvar of
+    Send i -> Just i
+    Receive _ -> Nothing
+    SendAndReceive i _ -> Just i
 
-dvarsStateOf :: ActorId -> DVarsState -> ActorState
-dvarsStateOf a (DVarsState t dv am) =
-    advanceActorStateTo t $ IntMap.findWithDefault empty a am
-  where
-    empty = emptyActorState t dv
+receiveIntervalId :: DVar -> Maybe IntervalId
+receiveIntervalId dvar = case dvar of
+    Send _ -> Nothing
+    Receive i -> Just i
+    SendAndReceive _ i -> Just i
 
-logMessage :: (Int, [Int]) -> DVarsState -> DVarsState
-logMessage (f,ts) (DVarsState time dvars am) =
-    let def = emptyActorState time dvars
-        a_f  = logSends ts $ IntMap.findWithDefault def f am
-        a_ts = [ logRecv f $ IntMap.findWithDefault def t am | t <- ts ]
-        am'  = foldr (\(k,v) -> v `seq` IntMap.insert k v) am $
-                   (f,a_f):(zip ts a_ts)
-    in DVarsState time dvars am'
-  where
-    logSends = flip (foldr logSend)
+lookupSender :: SenderId -> DVars -> [(ReceiverId, DVar)]
+lookupSender s dvars = let
+    m = Map.fromList $ map (second Send) $ History.pastEvents $ senderHistory s dvars
+    m' = foldr (uncurry $ Map.insertWith' (\(Receive j) (Send i) -> SendAndReceive i j))
+               m
+               (map (second Receive) $ History.pastEvents $ receiverHistory s dvars)
+    in Map.toList m'
 
-updateDVarsState :: Message -> DVarsState -> DVarsState
-updateDVarsState (Message _ time f ts) =
-    logMessage (f,ts) . advanceDVarsStateTo time
-
-messageHistory :: DVarsState -> [Message] -> (DVarsState, [DVarsState])
-messageHistory =
-    mapAccumR (\h0 m -> 
-        let h  = advanceDVarsStateTo (messageTime m) h0
-            h' = logMessage (messageFrom m, messageTo m) h
-        in (h',h))
+lookupDyad :: (SenderId, ReceiverId) -> DVars -> Maybe DVar
+lookupDyad (s,r) dvars = let
+    mi = History.lookup r $ senderHistory s dvars
+    mj = History.lookup r $ receiverHistory s dvars
+    in case (mi,mj) of
+        (Just i, Just j) -> Just $ SendAndReceive i j
+        (Just i, Nothing) -> Just $ Send i
+        (Nothing, Just j) -> Just $ Receive j
+        (Nothing, Nothing) -> Nothing
