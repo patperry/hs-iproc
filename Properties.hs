@@ -1,10 +1,12 @@
+{-# LANGUAGE TupleSections #-}
 module Properties
     where
 
 import Data.Time
+import Data.Time.Clock.POSIX
 import Data.Function( on )
-import Data.List( nub, sort, sortBy )
-import Data.Maybe( fromJust )
+import Data.List( nub, nubBy, sort, sortBy )
+import Data.Maybe( fromJust, mapMaybe )
 import Test.Framework
 import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck hiding ( vector )
@@ -17,7 +19,10 @@ import Actor( Actor(..) )
 import ActorSet( ActorSet )
 import qualified ActorSet as ActorSet
 
-import IntervalSet (IntervalSet, IntervalId )
+import History( History )
+import qualified History as History
+
+import IntervalSet(IntervalSet, IntervalId )
 import qualified IntervalSet as IntervalSet
 
 import SVars( SVars )
@@ -95,6 +100,41 @@ instance Arbitrary NonEmptyIntervalSet where
         (IntervalList ts) <- arbitrary
         return $ NonEmptyIntervalSet $
             IntervalSet.fromList $ nub $ sort $ (abs t + 1):ts
+
+
+instance Arbitrary UTCTime where
+    arbitrary = do
+        n <- arbitrary :: Gen Int
+        return $ posixSecondsToUTCTime $ fromIntegral n
+
+data EmptyHistory = EmptyHistory IntervalSet UTCTime
+    deriving (Eq, Show)
+
+instance Arbitrary EmptyHistory where
+    arbitrary = do
+        iset <- arbitrary
+        t0 <- arbitrary
+        return $ EmptyHistory iset t0
+
+data UpdateHistory e = AdvanceBy DiffTime
+                     | Insert e
+    deriving (Eq, Show)
+    
+updateHistory :: (Ord e) => UpdateHistory e -> History e -> History e
+updateHistory (AdvanceBy dt) = History.advanceBy dt
+updateHistory (Insert e) = History.insert e
+    
+instance (Arbitrary e, Ord e) => Arbitrary (UpdateHistory e) where
+    arbitrary = do
+        dt <- fmap abs arbitrary
+        e <- arbitrary
+        elements [ AdvanceBy dt, Insert e]
+
+instance (Arbitrary e, Ord e) => Arbitrary (History e) where
+    arbitrary = do
+        (EmptyHistory iset t0) <- arbitrary
+        us <- arbitrary
+        return $ foldr updateHistory (History.empty iset t0) us
 
 
 tests_ActorSet = testGroup "ActorSet"
@@ -241,9 +281,56 @@ prop_IntervalSet_lookup_beyond_last (NonEmptyIntervalSet iset) =
     n = IntervalSet.size iset
     tlast = IntervalSet.at (n - 1) iset
 
+
+tests_History = testGroup "History"
+    [ testProperty "pastEvents" prop_History_pastEvents
+    , testProperty "currentEvents . insert" prop_History_currentEvents_insert
+    , testProperty "pastEvents . advanceBy" prop_History_pastEvents_advanceBy
+    , testProperty "lookup . advanceBy . insert" prop_History_lookup_advanceBy_insert
+    ]
+    
+prop_History_pastEvents h =
+    History.pastEvents h
+        == map (\(dt,e) -> (fromJust $ IntervalSet.lookup dt iset, e))
+               (History.pastEventsWithTimes h)
+  where
+    iset = History.intervalSet h
+    _ = h :: History Int
+    
+prop_History_currentEvents_insert h e =
+    (sort . History.currentEvents . History.insert e) h
+    ==
+    (sort . nub . (e:) . History.currentEvents) h
+  where
+    _ = h :: History Int
+    
+prop_History_pastEvents_advanceBy h (NonNegative dt) =
+    sort ((History.pastEvents . History.advanceBy dt) h)
+        == 
+            (sort . nubBy ((==) `on` snd))
+                 (mapMaybe (\e -> (,e) `fmap` IntervalSet.lookup dt iset)
+                           (History.currentEvents h)
+                  ++
+                  mapMaybe (\(t,e) -> ((,e) `fmap` IntervalSet.lookup (t+dt) iset))
+                           (History.pastEventsWithTimes h)
+                 )
+  where
+    iset = History.intervalSet h
+    _ = h :: History Int
+    
+prop_History_lookup_advanceBy_insert h e dt =
+    (History.lookup e
+     . History.advanceBy dt'
+     . History.insert e) h
+        == IntervalSet.lookup dt' (History.intervalSet h)
+  where
+    dt' = abs dt + picosecondsToDiffTime 1
+    _ = e :: Int
+        
     
 main :: IO ()
 main = defaultMain [ tests_ActorSet
                    , tests_SVars
                    , tests_IntervalSet
+                   , tests_History
                    ]
