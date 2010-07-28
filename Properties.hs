@@ -512,7 +512,7 @@ tests_Summary = testGroup "Summary"
 prop_Summary_singleton (MessageWithVars m s d) = and
     [ Summary.messageCount smry == 1
     , Summary.messageLengthCount smry == Map.singleton (length ts) 1
-    , Summary.sendCount smry == Map.singleton f 1
+    , Summary.sendCount smry == Map.singleton f (length ts)
     , Summary.receiveCount smry == Map.fromList (zip ts (repeat 1))
     , Summary.svarsSum smry
         == foldl1' addVector [ SVars.lookupDyad (f,t) s | t <- ts ]
@@ -534,14 +534,11 @@ prop_Summary_singleton (MessageWithVars m s d) = and
     ts = messageTo m
     smry = Summary.singleton s (m,d)
 
-prop_Summary_fromList (MessagesWithVars ms s d) = let
-    actual = Summary.fromList s mds
-    expected = foldl' Summary.union
-                      (Summary.empty s)
-                      (map (Summary.singleton s) mds)
-    in if actual == expected
-            then True
-            else trace ("\nexpected: " ++ show expected ++ "\nactual: " ++ show actual) False
+prop_Summary_fromList (MessagesWithVars ms s d) =
+    Summary.fromList s mds
+        == foldl' Summary.union
+                  (Summary.empty s)
+                  (map (Summary.singleton s) mds)
   where
     (_,mds) = Message.accumDVars d ms
 

@@ -68,7 +68,7 @@ insert :: (Message, DVars) -> Summary -> Summary
 insert (m,dv) (Summary sv n l s r x si ri) = let
     n' = n + 1
     l' = Map.insertWith' (+) (length ts) 1 l
-    s' = Map.insertWith' (+) f 1 s
+    s' = Map.insertWith' (+) f (length ts) s
     r' = foldl' (flip $ \t -> Map.insertWith' (+) t 1) r ts
     x' = addVector x $
              foldl1' addVector [ SVars.lookupDyad (f,t) sv | t <- ts ]
