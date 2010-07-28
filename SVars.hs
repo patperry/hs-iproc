@@ -23,7 +23,7 @@ data SVars =
           , varMap :: !(IntMap [(ReceiverId, Vector Double)])
           , senders :: [Sender]
           , receivers :: [Receiver]
-          }
+          } deriving (Eq, Show)
 
 interactions :: Sender -> Receiver -> Vector Double
 interactions s r = (actorVars r) `kroneckerVector` (actorVars s)
