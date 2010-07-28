@@ -44,10 +44,13 @@ fromListsWith f ss rs | null ss = error "empty Sender list"
             | s <- ss ]
     in SVars p m ss rs
 
-lookupSender :: SenderId -> SVars -> Maybe [(ReceiverId, Vector Double)]
-lookupSender s (SVars _ m _ _) = IntMap.lookup s m
+lookupSender :: SenderId -> SVars -> [(ReceiverId, Vector Double)]
+lookupSender s (SVars _ m _ _) =
+    IntMap.findWithDefault (error "unknown sender") s m
 
-lookupDyad :: (SenderId, ReceiverId) -> SVars -> Maybe (Vector Double)
-lookupDyad (s,r) svars = do
-    rs <- lookupSender s svars
-    lookup r rs
+lookupDyad :: (SenderId, ReceiverId) -> SVars -> Vector Double
+lookupDyad (s,r) svars = let
+    rs = lookupSender s svars
+    in case lookup r rs of
+           Nothing -> error "unknown receiver"
+           Just x -> x
