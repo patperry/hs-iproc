@@ -1,5 +1,5 @@
 {-# LANGUAGE TupleSections #-}
-module Properties
+module Main
     where
 
 import Data.Time
