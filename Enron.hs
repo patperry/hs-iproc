@@ -1,9 +1,9 @@
 module Enron (
     Employee(..),
-    actorFromEmployee,
+    fromEmployee,
 
     Email(..),
-    messageFromEmail,
+    fromEmail,
     
     fetchEmployeeList',
     fetchEmailList',
@@ -40,8 +40,8 @@ data Employee =
              }
         deriving (Eq, Show)
 
-actorFromEmployee :: Employee -> Actor
-actorFromEmployee (Employee eid _ _ _ g s d) =
+fromEmployee :: Employee -> Actor
+fromEmployee (Employee eid _ _ _ g s d) =
     let f = if g == Female then 1 else 0
         j = if s == Junior then 1 else 0
         l = if d == Legal then 1 else 0
@@ -61,8 +61,8 @@ data Email =
           }
         deriving (Eq, Show)
 
-messageFromEmail :: Email -> Message
-messageFromEmail (Email eid _ time _ f tos) =
+fromEmail :: Email -> Message
+fromEmail (Email eid _ time _ f tos) =
     Message eid time f tos
 
 fetchEmployeeList' :: (IConnection conn) => conn -> IO [Employee]
