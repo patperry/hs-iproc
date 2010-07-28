@@ -4,10 +4,15 @@ module DVars (
     insert,
     advanceTo,
     advanceBy,
-    
-    DVar(..),
     lookupSender,
     lookupDyad,
+    senderHistory,
+    receiverHistory,
+    
+    DVar(..),
+    sendIntervalId,
+    receiveIntervalId,
+    
     ) where
         
 import Control.Arrow( second )

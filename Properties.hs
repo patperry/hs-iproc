@@ -19,7 +19,7 @@ import Actor( Actor(..), SenderId, ReceiverId )
 import ActorSet( ActorSet )
 import qualified ActorSet as ActorSet
 
-import DVars( DVars )
+import DVars( DVars, DVar(..) )
 import qualified DVars as DVars
 
 import History( History )
@@ -181,6 +181,19 @@ instance Arbitrary DVarsWithSender where
                      DVarsInsert (s,rs) -> Just $ s:rs
         return $ DVarsWithSender s $ foldr updateDVars dvars us
 
+data DVarsWithSameIntervalsAndSender =
+        DVarsWithSameIntervalsAndSender SenderId DVars deriving (Show)
+instance Arbitrary DVarsWithSameIntervalsAndSender where
+    arbitrary = do
+        (EmptyDVars int _ t0) <- arbitrary
+        us <- arbitrary
+        s <- elements $ (0:) $ concat $ flip mapMaybe us $ \u ->
+                 case u of
+                     DVarsAdvanceBy _ -> Nothing
+                     DVarsInsert (s,rs) -> Just $ s:rs
+        return $ DVarsWithSameIntervalsAndSender s $
+                     foldr updateDVars (DVars.empty int int t0) us
+
 tests_ActorSet = testGroup "ActorSet"
     [ testProperty "size . fromList" prop_ActorSet_size_fromList
     , testProperty "lookup . fromList" prop_ActorSet_lookup_fromList
@@ -245,13 +258,13 @@ prop_SVars_receivers_fromLists (ActorList ss) (ActorList rs) =
 prop_SVars_lookupDyad_fromLists (ActorList ss) (ActorList rs) = let
     svars = SVars.fromLists ss rs
     in and [ SVars.lookupDyad (actorId s, actorId r) svars
-                == Just (SVars.interactions s r)
+                == SVars.interactions s r
            | s <- ss, r <- rs ]
     
 prop_SVars_lookupSender_fromLists (ActorList ss) (ActorList rs) = let
     svars = SVars.fromLists ss rs
     in and [ SVars.lookupSender (actorId s) svars
-                == Just [ (actorId r, SVars.interactions s r) | r <- rs ] 
+                == [ (actorId r, SVars.interactions s r) | r <- rs ] 
            | s <- ss ]
 
 
@@ -373,12 +386,45 @@ prop_History_lookup_advanceBy_insert h e dt =
 
 
 tests_DVars = testGroup "DVars"
-        [ testProperty "lookupSender" prop_DVars_lookupSender
+        [ testProperty "senderHistory" prop_DVars_senderHistory
+        , testProperty "receiverHistory" prop_DVars_receiverHistory
+        , testProperty "lookupSender" prop_DVars_lookupSender
+        , testProperty "lookupDyad (dual)" prop_DVars_lookupDyad_dual
         ]
 
+prop_DVars_senderHistory dvars (f,ts) (NonNegative dt) =
+        (History.advanceBy dt
+         . flip (foldr History.insert) ts
+         . DVars.senderHistory f) dvars
+        ==
+        (DVars.senderHistory f
+         . DVars.advanceBy dt
+         . DVars.insert (f,ts)) dvars
+
+prop_DVars_receiverHistory dvars (f,ts) (NonNegative dt) =
+    flip all ts $ \t ->
+        (History.advanceBy dt
+         . History.insert f
+         . DVars.receiverHistory t) dvars
+        ==
+        (DVars.receiverHistory t
+         . DVars.advanceBy dt
+         . DVars.insert (f,ts)) dvars
+
 prop_DVars_lookupSender (DVarsWithSender s dvars) = let
-    xs = DVars.lookupSender s dvars
-    in xs == [ (r, fromJust $ DVars.lookupDyad (s,r) dvars) | (r,_) <- xs ]
+    rds = DVars.lookupSender s dvars
+    in rds == [ (r, fromJust $ DVars.lookupDyad (s,r) dvars) | (r,_) <- rds ]
+
+prop_DVars_lookupDyad_dual (DVarsWithSameIntervalsAndSender s dvars) = let
+    rds = DVars.lookupSender s dvars
+    in and [ fmap dual (DVars.lookupDyad (s,r) dvars)
+                 == DVars.lookupDyad (r,s) dvars
+           | (r,_) <- rds
+           ]
+  where
+    dual (Send k) = Receive k
+    dual (Receive l) = Send l
+    dual (SendAndReceive k l) = SendAndReceive l k
     
 main :: IO ()
 main = defaultMain [ tests_ActorSet
