@@ -2,6 +2,7 @@
 module Main
     where
 
+import Control.Monad( replicateM )
 import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Function( on )
@@ -9,6 +10,7 @@ import Data.List( foldl', foldl1', nub, nubBy, sort, sortBy )
 import Data.Maybe( fromJust, catMaybes, mapMaybe )
 import qualified Data.Map as Map
 import Debug.Trace
+import System.Random( Random )
 import Test.Framework
 import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck hiding ( vector )
@@ -134,13 +136,13 @@ updateHistory :: (Ord e) => UpdateHistory e -> History e -> History e
 updateHistory (HistoryAdvanceBy dt) = History.advanceBy dt
 updateHistory (HistoryInsert e) = History.insert e
     
-instance (Arbitrary e, Ord e) => Arbitrary (UpdateHistory e) where
+instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (UpdateHistory e) where
     arbitrary = do
         dt <- fmap abs arbitrary
-        e <- arbitrary
+        e <- choose (0,5)
         elements [ HistoryAdvanceBy dt, HistoryInsert e]
 
-instance (Arbitrary e, Ord e) => Arbitrary (History e) where
+instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (History e) where
     arbitrary = do
         (EmptyHistory iset t0) <- arbitrary
         us <- arbitrary
@@ -169,7 +171,9 @@ instance Arbitrary UpdateDVars where
     arbitrary = do
         dt <- fmap abs arbitrary
         m <- arbitrary
-        elements [ DVarsAdvanceBy dt, DVarsInsert m ]
+        elements [ DVarsAdvanceBy dt
+                 , DVarsInsert (messageFrom m, messageTo m)
+                 ]
 
 instance Arbitrary DVars where
     arbitrary = do
@@ -205,10 +209,15 @@ instance Arbitrary Message where
     arbitrary = do
         i <- abs `fmap` arbitrary
         time <- arbitrary
-        f <- arbitrary
-        t <- arbitrary
-        ts <- arbitrary
-        return $ Message i time f (nub $ t:ts)
+        f <- choose (0,5)
+        l <- frequency [ (16, return 1)
+                       , (8, return 2)
+                       , (4, return 3)
+                       , (2, return 4)
+                       , (1, return 5)
+                       ]
+        ts <- replicateM l $ choose (0,5)
+        return $ Message i time f (nub ts)
         
 data NonNullMessageList = NonNullMessageList [Message] deriving (Eq, Show)
 instance Arbitrary NonNullMessageList where
