@@ -5,8 +5,10 @@ module Main
 import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Function( on )
-import Data.List( nub, nubBy, sort, sortBy )
-import Data.Maybe( fromJust, mapMaybe )
+import Data.List( foldl', foldl1', nub, nubBy, sort, sortBy )
+import Data.Maybe( fromJust, catMaybes, mapMaybe )
+import qualified Data.Map as Map
+import Debug.Trace
 import Test.Framework
 import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck hiding ( vector )
@@ -27,6 +29,11 @@ import qualified History as History
 
 import IntervalSet(IntervalSet, IntervalId )
 import qualified IntervalSet as IntervalSet
+
+import Message
+
+import Summary( Summary )
+import qualified Summary as Summary
 
 import SVars( SVars )
 import qualified SVars as SVars
@@ -193,6 +200,76 @@ instance Arbitrary DVarsWithSameIntervalsAndSender where
                      DVarsInsert (s,rs) -> Just $ s:rs
         return $ DVarsWithSameIntervalsAndSender s $
                      foldr updateDVars (DVars.empty int int t0) us
+
+instance Arbitrary Message where
+    arbitrary = do
+        i <- abs `fmap` arbitrary
+        time <- arbitrary
+        f <- arbitrary
+        t <- arbitrary
+        ts <- arbitrary
+        return $ Message i time f (nub $ t:ts)
+        
+data NonNullMessageList = NonNullMessageList [Message] deriving (Eq, Show)
+instance Arbitrary NonNullMessageList where
+    arbitrary = do
+        m <- arbitrary
+        ms <- arbitrary
+        let ms' = (nubBy ((==) `on` messageId)
+                   . sortBy (compare `on` messageTime)) (m:ms)
+        return $ NonNullMessageList ms'
+
+data MessageList = MessageList [Message] deriving (Eq, Show)
+instance Arbitrary MessageList where
+    arbitrary = do
+        (NonNullMessageList ms) <- arbitrary
+        return $ MessageList $ drop 1 ms
+
+svarsWith :: [Message] -> Gen SVars
+svarsWith ms =
+    let s_ids = (nub . map messageFrom) ms
+        r_ids = (nub . concatMap messageTo) ms
+    in do
+        p <- choose (0,5)
+        q <- choose (0,5)
+        ss <- mapM (flip actorWithId p) s_ids
+        rs <- mapM (flip actorWithId q) r_ids
+        return $ SVars.fromLists ss rs
+
+dvarsWith :: [Message] -> Gen DVars
+dvarsWith [] = arbitrary
+dvarsWith ms = 
+    let t0 = (minimum . map messageTime) ms
+    in do
+        sint <- arbitrary
+        rint <- arbitrary
+        return $ DVars.empty sint rint t0
+
+data MessagesWithVars = MessagesWithVars [Message] SVars DVars deriving (Show)
+instance Arbitrary MessagesWithVars where
+    arbitrary = do
+        (NonNullMessageList ms) <- arbitrary
+        sv <- svarsWith ms
+        dv <- dvarsWith ms
+        return $ MessagesWithVars ms sv dv
+
+data MessageWithVars = MessageWithVars Message SVars DVars deriving (Show)
+instance Arbitrary MessageWithVars where
+    arbitrary = do
+        (MessageList ms) <- arbitrary
+        dt <- fmap abs arbitrary :: Gen Int
+        m <- arbitrary
+        t <- if null ms then arbitrary
+                        else return $ addUTCTime (realToFrac dt)
+                                                 (messageTime (last ms))
+        let m' = m{ messageTime = t }
+            ms' = ms ++ [m']
+        
+        sv <- svarsWith ms'
+        dv <- dvarsWith ms'
+        return $ MessageWithVars m' sv $ 
+                     (snd . last . snd) (Message.accumDVars dv ms')
+        
 
 tests_ActorSet = testGroup "ActorSet"
     [ testProperty "size . fromList" prop_ActorSet_size_fromList
@@ -425,6 +502,49 @@ prop_DVars_lookupDyad_dual (DVarsWithSameIntervalsAndSender s dvars) = let
     dual (Send k) = Receive k
     dual (Receive l) = Send l
     dual (SendAndReceive k l) = SendAndReceive l k
+
+
+tests_Summary = testGroup "Summary"
+        [ testProperty "singleton" prop_Summary_singleton
+        , testProperty "fromList" prop_Summary_fromList
+        ]
+
+prop_Summary_singleton (MessageWithVars m s d) = and
+    [ Summary.messageCount smry == 1
+    , Summary.messageLengthCount smry == Map.singleton (length ts) 1
+    , Summary.sendCount smry == Map.singleton f 1
+    , Summary.receiveCount smry == Map.fromList (zip ts (repeat 1))
+    , Summary.svarsSum smry
+        == foldl1' addVector [ SVars.lookupDyad (f,t) s | t <- ts ]
+    , Summary.dvarsSendSum smry
+        == foldl' (flip $ \i -> Map.insertWith' (+) i 1)
+                  Map.empty
+                  (catMaybes [ DVars.lookupDyad (f,t) d
+                               >>= DVars.sendIntervalId
+                             | t <- ts ])
+    , Summary.dvarsReceiveSum smry
+        == foldl' (flip $ \i -> Map.insertWith' (+) i 1)
+                  Map.empty
+                  (catMaybes [ DVars.lookupDyad (f,t) d
+                               >>= DVars.receiveIntervalId
+                             | t <- ts ])
+    ]
+  where
+    f = messageFrom m
+    ts = messageTo m
+    smry = Summary.singleton s (m,d)
+
+prop_Summary_fromList (MessagesWithVars ms s d) = let
+    actual = Summary.fromList s mds
+    expected = foldl' Summary.union
+                      (Summary.empty s)
+                      (map (Summary.singleton s) mds)
+    in if actual == expected
+            then True
+            else trace ("\nexpected: " ++ show expected ++ "\nactual: " ++ show actual) False
+  where
+    (_,mds) = Message.accumDVars d ms
+
     
 main :: IO ()
 main = defaultMain [ tests_ActorSet
@@ -432,4 +552,5 @@ main = defaultMain [ tests_ActorSet
                    , tests_IntervalSet
                    , tests_History
                    , tests_DVars
+                   , tests_Summary
                    ]
