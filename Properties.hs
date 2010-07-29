@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE FlexibleInstances, TupleSections #-}
 module Main
     where
 
@@ -7,6 +7,8 @@ import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Function( on )
 import Data.List( foldl', foldl1', nub, nubBy, sort, sortBy )
+import Data.Map( Map )
+import qualified Data.Map as Map
 import Data.Maybe( fromJust, catMaybes, mapMaybe )
 import qualified Data.Map as Map
 import Debug.Trace
@@ -18,10 +20,7 @@ import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.LinearAlgebra as Test
 import Numeric.LinearAlgebra
 
-import Actor( Actor(..), SenderId, ReceiverId )
-
-import ActorSet( ActorSet )
-import qualified ActorSet as ActorSet
+import Actor( Actor(..), ActorId, SenderId, ReceiverId )
 
 import DVars( DVars, DVar(..) )
 import qualified DVars as DVars
@@ -42,48 +41,25 @@ import qualified SVars as SVars
 
 actor :: Int -> Gen Actor
 actor p = do
-    (NonNegative i) <- arbitrary
-    actorWithId i p
-
-actorWithId :: Int -> Int -> Gen Actor
-actorWithId i p = do
     x <- Test.vector p
-    return $ Actor i x
+    return $ Actor x
 
 instance Arbitrary Actor where
     arbitrary = do
         p <-  choose (0,5)
         actor p
-        
-actorSet :: Int -> Gen ActorSet
-actorSet p = do
-    n <- choose (1, 20)
-    actorSetWithSize n p
 
-actorSetWithSize :: Int -> Int -> Gen ActorSet
-actorSetWithSize n p = do
-    is <- (mangle [] . sort) `fmap` QC.vector n
-    as <- mapM (\i -> actorWithId i p) is
-    return $ ActorSet.fromList as
-  where
-      mangle acc [] = reverse acc
-      mangle acc (x:xs) = let
-          x' = if x `notElem` acc then x else maximum acc + 1
-          in mangle (x':acc) xs
-
-instance Arbitrary ActorSet where
+actorMap :: Int -> Gen (Map ActorId Actor)
+actorMap p = do
+    i <- arbitrary
+    is <- (i:) `fmap` arbitrary
+    xs <- replicateM (length is) (actor p)
+    return $ Map.fromList $ zip is xs
+    
+instance Arbitrary (Map ActorId Actor) where
     arbitrary = do
         p <- choose (0,5)
-        actorSet p
-
-data ActorList = ActorList [Actor] deriving (Show)
-instance Arbitrary ActorList where
-    arbitrary = do
-        as <- ActorSet.toList `fmap` arbitrary
-        is <- QC.vector $ length as :: Gen [Int]
-        let as' = (snd . unzip . sortBy (compare `on` fst)) $ zip is as
-        return $ ActorList as'
-
+        actorMap p
 
 instance Arbitrary DiffTime where
     arbitrary = do
@@ -236,14 +212,15 @@ instance Arbitrary MessageList where
 
 svarsWith :: [Message] -> Gen SVars
 svarsWith ms =
-    let s_ids = (nub . map messageFrom) ms
-        r_ids = (nub . concatMap messageTo) ms
+    let is = (nub . map messageFrom) ms
+        js = (nub . concatMap messageTo) ms
     in do
         p <- choose (0,5)
         q <- choose (0,5)
-        ss <- mapM (flip actorWithId p) s_ids
-        rs <- mapM (flip actorWithId q) r_ids
-        return $ SVars.fromLists ss rs
+        ss <- replicateM (length is) (actor p)
+        rs <- replicateM (length js) (actor q)
+        return $ SVars.fromActors (Map.fromList $ zip is ss)
+                                  (Map.fromList $ zip js rs)
 
 dvarsWith :: [Message] -> Gen DVars
 dvarsWith [] = arbitrary
@@ -280,43 +257,13 @@ instance Arbitrary MessageWithVars where
                      (snd . last . snd) (Message.accumDVars dv ms')
         
 
-tests_ActorSet = testGroup "ActorSet"
-    [ testProperty "size . fromList" prop_ActorSet_size_fromList
-    , testProperty "lookup . fromList" prop_ActorSet_lookup_fromList
-    , testProperty "at . fromList" prop_ActorSet_at_fromList
-    , testProperty "assocs . fromList" prop_ActorSet_assocs_fromList
-    , testProperty "toList . fromList" prop_ActorSet_toList_fromList
-    ]
-
-prop_ActorSet_size_fromList (ActorList as) =
-    (ActorSet.size . ActorSet.fromList) as == length as
-    
-prop_ActorSet_lookup_fromList (ActorList as) = let
-    a_set = ActorSet.fromList as
-    in and [ ActorSet.lookup (actorId a) a_set == Just i
-           | (i,a) <- zip [ 0.. ] as 
-           ]
-
-prop_ActorSet_at_fromList (ActorList as) = let
-    a_set = ActorSet.fromList as
-    in and [ ActorSet.at i a_set == a
-           | (i,a) <- zip [ 0.. ] as 
-           ]
-           
-prop_ActorSet_assocs_fromList (ActorList as) =
-    (ActorSet.assocs . ActorSet.fromList) as == zip [ 0.. ] as
-
-prop_ActorSet_toList_fromList (ActorList as) =
-    (ActorSet.toList . ActorSet.fromList) as == as
-
-
 tests_SVars = testGroup "SVars"
     [ testProperty "interactions" prop_SVars_interactions
-    , testProperty "dim . fromLists" prop_SVars_dim_fromLists
-    , testProperty "senders . fromLists" prop_SVars_senders_fromLists
-    , testProperty "receivers . fromLists" prop_SVars_receivers_fromLists
-    , testProperty "lookupDyad . fromLists" prop_SVars_lookupDyad_fromLists
-    , testProperty "lookupSender . fromLists" prop_SVars_lookupSender_fromLists
+    , testProperty "dim . fromActors" prop_SVars_dim_fromActors
+    , testProperty "senders . fromActors" prop_SVars_senders_fromActors
+    , testProperty "receivers . fromActors" prop_SVars_receivers_fromActors
+    , testProperty "lookupDyad . fromActors" prop_SVars_lookupDyad_fromActors
+    , testProperty "lookupSender . fromActors" prop_SVars_lookupSender_fromActors
     ]
 
 prop_SVars_interactions s r =
@@ -328,30 +275,30 @@ prop_SVars_interactions s r =
     y = actorVars r
     p = dimVector x * dimVector y
 
-prop_SVars_dim_fromLists (ActorList ss) (ActorList rs) =
-    SVars.dim (SVars.fromLists ss rs)
+prop_SVars_dim_fromActors ss rs =
+    SVars.dim (SVars.fromActors ss rs)
         == dimVector (SVars.interactions s r)
   where
-    s = head ss
-    r = head rs
+    s = snd $ Map.elemAt 0 ss
+    r = snd $ Map.elemAt 0 rs
 
-prop_SVars_senders_fromLists (ActorList ss) (ActorList rs) =
-    SVars.senders (SVars.fromLists ss rs) == ss
+prop_SVars_senders_fromActors ss rs =
+    SVars.senders (SVars.fromActors ss rs) == ss
 
-prop_SVars_receivers_fromLists (ActorList ss) (ActorList rs) =
-    SVars.receivers (SVars.fromLists ss rs) == rs
+prop_SVars_receivers_fromActors ss rs =
+    SVars.receivers (SVars.fromActors ss rs) == rs
 
-prop_SVars_lookupDyad_fromLists (ActorList ss) (ActorList rs) = let
-    svars = SVars.fromLists ss rs
-    in and [ SVars.lookupDyad (actorId s, actorId r) svars
+prop_SVars_lookupDyad_fromActors ss rs = let
+    svars = SVars.fromActors ss rs
+    in and [ SVars.lookupDyad (i,j) svars
                 == SVars.interactions s r
-           | s <- ss, r <- rs ]
+           | (i,s) <- Map.assocs ss, (j,r) <- Map.assocs rs ]
     
-prop_SVars_lookupSender_fromLists (ActorList ss) (ActorList rs) = let
-    svars = SVars.fromLists ss rs
-    in and [ SVars.lookupSender (actorId s) svars
-                == [ (actorId r, SVars.interactions s r) | r <- rs ] 
-           | s <- ss ]
+prop_SVars_lookupSender_fromActors ss rs = let
+    svars = SVars.fromActors ss rs
+    in and [ SVars.lookupSender i svars
+                == [ (j, SVars.interactions s r) | (j,r) <- Map.assocs rs ] 
+           | (i,s) <- Map.assocs ss ]
 
 
 tests_IntervalSet = testGroup "IntervalSet"
@@ -553,8 +500,7 @@ prop_Summary_fromList (MessagesWithVars ms s d) =
 
     
 main :: IO ()
-main = defaultMain [ tests_ActorSet
-                   , tests_SVars
+main = defaultMain [ tests_SVars
                    , tests_IntervalSet
                    , tests_History
                    , tests_DVars

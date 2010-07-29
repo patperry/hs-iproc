@@ -16,8 +16,7 @@ type ReceiverId = Int
 type SenderId = Int
 
 data Actor =
-    Actor { actorId :: !ActorId
-          , actorVars :: !(Vector Double)
+    Actor { actorVars :: !(Vector Double)
           }
     deriving (Eq, Show)
               

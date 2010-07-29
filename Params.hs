@@ -1,7 +1,5 @@
 module Params (
     Params,
-    senderSet,
-    receiverSet,
     staticCoefs,
     sendCoefs,
     receiveCoefs,
@@ -28,9 +26,7 @@ import qualified Data.Map as Map
 
 import Numeric.LinearAlgebra
 
-import Actor( ReceiverId, SenderId, actorId )
-import ActorSet( ActorSet )
-import qualified ActorSet as ActorSet
+import Actor( Receiver, ReceiverId, Sender, SenderId )
 import qualified IntervalSet as IntervalSet
 import SVars( SVars )
 import qualified SVars as SVars
@@ -43,9 +39,7 @@ data SenderParams =
                  } deriving (Eq, Show)
 
 data Params =
-    Params { senderSet :: !ActorSet
-           , receiverSet :: !ActorSet
-           , svars :: !SVars
+    Params { svars :: !SVars
            , staticCoefs :: !(Vector Double)
            , sendCoefs :: !(Vector Double)
            , receiveCoefs :: !(Vector Double)
@@ -56,9 +50,9 @@ data Params =
 
 
 senderParamsMap :: Params -> Map SenderId SenderParams
-senderParamsMap p@(Params ss rs sv coefs _ _ _ _) =
+senderParamsMap p@(Params sv coefs _ _ _ _) =
     Map.fromList [ (s, senderParams s)
-                 | s <- map actorId $ ActorSet.toList ss ]
+                 | s <- Map.keys (SVars.senders sv) ]
   where
     weight x = let
         lw = coefs `dotVector` x
@@ -73,11 +67,9 @@ senderParamsMap p@(Params ss rs sv coefs _ _ _ _) =
         w_sum = foldl' (+) 0 $ map fst $ Map.elems wm
         in SenderParams wm w_sum
            
-defaultParams :: ActorSet -> ActorSet -> SVars -> DVars -> Params
-defaultParams ss rs sv dv = let
-    p = Params ss
-               rs
-               sv
+defaultParams :: SVars -> DVars -> Params
+defaultParams sv dv = let
+    p = Params sv
                (constantVector (SVars.dim sv) 0)
                (constantVector (IntervalSet.size $ DVars.sendIntervals dv) 0)
                (constantVector (IntervalSet.size $ DVars.receiveIntervals dv) 0)
@@ -86,32 +78,32 @@ defaultParams ss rs sv dv = let
     in p
 
 withStaticCoefs :: Vector Double -> Params -> Params
-withStaticCoefs coefs' (Params ss rs sv coefs scoefs rcoefs loops _)
+withStaticCoefs coefs' (Params sv coefs scoefs rcoefs loops _)
     | dimVector coefs' /= dimVector coefs =
         error "dimension mismatch"
     | otherwise = let
-        p = Params ss rs sv coefs' scoefs rcoefs loops (senderParamsMap p)
+        p = Params sv coefs' scoefs rcoefs loops (senderParamsMap p)
         in p
 
 withSendCoefs :: Vector Double -> Params -> Params
-withSendCoefs scoefs' (Params ss rs sv coefs scoefs rcoefs loops _)
+withSendCoefs scoefs' (Params sv coefs scoefs rcoefs loops _)
     | dimVector scoefs' /= dimVector scoefs =
         error "dimension mismatch"
     | otherwise = let
-        p = Params ss rs sv coefs scoefs' rcoefs loops (senderParamsMap p)
+        p = Params sv coefs scoefs' rcoefs loops (senderParamsMap p)
         in p
 
 withReceiveCoefs :: Vector Double -> Params -> Params
-withReceiveCoefs rcoefs' (Params ss rs sv coefs scoefs rcoefs loops _)
+withReceiveCoefs rcoefs' (Params sv coefs scoefs rcoefs loops _)
     | dimVector rcoefs' /= dimVector rcoefs =
         error "dimension mismatch"
     | otherwise = let
-        p = Params ss rs sv coefs scoefs rcoefs' loops (senderParamsMap p)
+        p = Params sv coefs scoefs rcoefs' loops (senderParamsMap p)
         in p
 
 withSelfLoops :: Bool -> Params -> Params
-withSelfLoops loops (Params ss rs sv coefs scoefs rcoefs _ _) = let
-    p = Params ss rs sv coefs scoefs rcoefs loops (senderParamsMap p)
+withSelfLoops loops (Params sv coefs scoefs rcoefs _ _) = let
+    p = Params sv coefs scoefs rcoefs loops (senderParamsMap p)
     in p
 
 validDyad :: (SenderId, ReceiverId) -> Params -> Bool

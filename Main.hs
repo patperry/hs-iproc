@@ -2,43 +2,45 @@ module Main
     where
 
 import Data.List( foldl' )
+import Data.Map( Map )
+import qualified Data.Map as Map
 import Database.HDBC
 import Database.HDBC.Sqlite3
         
-import Numeric.LinearAlgebra
+import Data.Time
         
-import Actor
-import DVars
-import SVars
-import Param
-import Deviance
+--import Actor
+import qualified IntervalSet as IntervalSet
+import qualified DVars as DVars
+import qualified SVars as SVars
+import Params( defaultParams )
 import Enron
 import Message
-import Summary
+import qualified Summary as Summary
         
-sendIntervals :: Vector DiffTime
-sendIntervals =
-    listVector 20 $ map (floor . (3600*) . (2^^)) $
+
+sendIntervals = IntervalSet.fromList $
+    map (realToFrac . floor . (3600*) . (2^^)) $    
         [ -7..2 ] ++ [ 4..13 ]
 
-recvIntervals :: Vector DiffTime
-recvIntervals =
-    listVector 19 $ map (floor . (3600*) . (2^^)) $
+recvIntervals = IntervalSet.fromList $
+    map (realToFrac . floor . (3600*) . (2^^)) $
         [ -7..11 ]
-
         
 main = do
     conn <- connectSqlite3 "enron.db"
-    as <- map actorFromEmployee `fmap` fetchEmployeeList' conn
-    ms <- map messageFromEmail `fmap` fetchEmailList' conn
-    let sv = svarsWith allDyadVars as as
-        dv = dvarsWithIntervals sendIntervals recvIntervals
-        t0 = 0
-        h0 = emptyDVarsState t0 dv
-        hs = snd $ messageHistory h0 ms
-        summ = foldl' updateSummary (emptySummary sv dv) $ zip ms hs
-        p = defaultParam (actorSet as) (actorSet as) sv dv
-        dev = foldl' updateDeviance (emptyDeviance sv dv p)
+    as <- (Map.fromList . map fromEmployee) `fmap` fetchEmployeeList' conn
+    ms <- map fromEmail `fmap` fetchEmailList' conn
+    let sv = SVars.fromActors as as
+        t0 = messageTime $ head ms
+        dv0 = DVars.empty sendIntervals recvIntervals t0
+        mds = snd $ Message.accumDVars dv0 ms
+        smry = Summary.fromList sv mds
+        p = defaultParams sv dv0
+        -- dev = foldl' updateDeviance (emptyDeviance sv dv p) $ zip ms hs
         
-    putStrLn $ "message count: " ++ show (messageCount summ)
+    putStrLn $ "message count: " ++ show (Summary.messageCount smry)
+    putStrLn $ "summary: " ++ show smry
+    -- putStrLn $ "deviance: " ++ show (value dev)
+    
     disconnect conn
