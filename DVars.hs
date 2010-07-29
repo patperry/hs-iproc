@@ -34,7 +34,7 @@ data DVars =
           , time :: !UTCTime
           , senderHistoryMap :: !(Map SenderId (History ReceiverId))
           , receiverHistoryMap :: !(Map ReceiverId (History SenderId))
-          } deriving (Show)
+          } deriving (Eq, Show)
 
 empty :: IntervalSet -> IntervalSet -> UTCTime -> DVars
 empty sint rint t0 = DVars sint rint t0 Map.empty Map.empty
