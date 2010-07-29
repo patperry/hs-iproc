@@ -90,24 +90,24 @@ withStaticCoefs coefs' (Params ss rs sv coefs scoefs rcoefs loops _)
     | dimVector coefs' /= dimVector coefs =
         error "dimension mismatch"
     | otherwise = let
-    p = Params ss rs sv coefs' scoefs rcoefs loops (senderParamsMap p)
-    in p
+        p = Params ss rs sv coefs' scoefs rcoefs loops (senderParamsMap p)
+        in p
 
 withSendCoefs :: Vector Double -> Params -> Params
 withSendCoefs scoefs' (Params ss rs sv coefs scoefs rcoefs loops _)
     | dimVector scoefs' /= dimVector scoefs =
         error "dimension mismatch"
     | otherwise = let
-    p = Params ss rs sv coefs scoefs' rcoefs loops (senderParamsMap p)
-    in p
+        p = Params ss rs sv coefs scoefs' rcoefs loops (senderParamsMap p)
+        in p
 
 withReceiveCoefs :: Vector Double -> Params -> Params
 withReceiveCoefs rcoefs' (Params ss rs sv coefs scoefs rcoefs loops _)
     | dimVector rcoefs' /= dimVector rcoefs =
         error "dimension mismatch"
     | otherwise = let
-    p = Params ss rs sv coefs scoefs rcoefs' loops (senderParamsMap p)
-    in p
+        p = Params ss rs sv coefs scoefs rcoefs' loops (senderParamsMap p)
+        in p
 
 withSelfLoops :: Bool -> Params -> Params
 withSelfLoops loops (Params ss rs sv coefs scoefs rcoefs _ _) = let
