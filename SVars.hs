@@ -9,10 +9,8 @@ module SVars (
     interactions,
   ) where
    
-import Data.Function( on )
 import Data.Map( Map )
 import qualified Data.Map as Map
-import Data.List( sortBy )
 import Numeric.LinearAlgebra
 
 import Actor

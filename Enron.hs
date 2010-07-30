@@ -1,9 +1,10 @@
 module Enron (
     Employee(..),
-    fromEmployee,
-
+    Gender(..),
+    Seniority(..),
+    Department(..),
+    
     Email(..),
-    fromEmail,
     
     fetchEmployeeList',
     fetchEmailList',
@@ -11,7 +12,6 @@ module Enron (
         
 import Control.Applicative
 import Database.HDBC
-import Database.HDBC.Sqlite3
 
 import Data.Map( Map )
 import qualified Data.Map as Map
@@ -19,10 +19,6 @@ import qualified Data.Map as Map
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 
-import Numeric.LinearAlgebra
-
-import Actor( Actor(..), ActorId )
-import Message( Message(..) )
 
 type EmployeeId = Int
 data Gender = Female | Male deriving (Eq, Show, Read)
@@ -40,17 +36,7 @@ data Employee =
              }
         deriving (Eq, Show)
 
-fromEmployee :: Employee -> (ActorId, Actor)
-fromEmployee (Employee eid _ _ _ g s d) =
-    let f = if g == Female then 1 else 0
-        j = if s == Junior then 1 else 0
-        l = if d == Legal then 1 else 0
-        t = if d == Trading then 1 else 0
-    in (eid, Actor $ listVector 12
-        [ 1, f, j, l, t, f*j, f*l, f*t, j*l, j*t, f*j*l, f*j*t ])
-
 type EmailId = Int
-type UnixTime = Int
 data Email =
     Email { emailId :: !EmailId
           , emaileFilename :: !String
@@ -60,10 +46,6 @@ data Email =
           , emailToList :: ![EmployeeId]
           }
         deriving (Eq, Show)
-
-fromEmail :: Email -> Message
-fromEmail (Email eid _ time _ f tos) =
-    Message eid time f tos
 
 fetchEmployeeList' :: (IConnection conn) => conn -> IO [Employee]
 fetchEmployeeList' conn = do

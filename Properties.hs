@@ -6,7 +6,7 @@ import Control.Monad( replicateM )
 import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Function( on )
-import Data.List( foldl', foldl1', nub, nubBy, sort, sortBy )
+import Data.List( foldl', foldl1', nub, nubBy, sort )
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Data.Maybe( fromJust, catMaybes, mapMaybe )
@@ -89,7 +89,6 @@ instance Arbitrary NonEmptyIntervalSet where
         return $ NonEmptyIntervalSet $
             IntervalSet.fromList $ nub $ sort $ (abs t + 1):ts
 
-
 instance Arbitrary UTCTime where
     arbitrary = do
         n <- arbitrary :: Gen Int
@@ -124,97 +123,11 @@ instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (History e) where
         us <- arbitrary
         return $ foldr updateHistory (History.empty iset t0) us
 
-
-data EmptyDVars = EmptyDVars IntervalSet IntervalSet UTCTime
-    deriving (Eq, Show)
-
-instance Arbitrary EmptyDVars where
-    arbitrary = do
-        send_iset <- arbitrary
-        recv_iset <- arbitrary
-        t0 <- arbitrary
-        return $ EmptyDVars send_iset recv_iset t0
-
-data UpdateDVars = DVarsAdvanceBy DiffTime
-                 | DVarsInsert (SenderId,[ReceiverId])
-    deriving (Eq, Show)
-    
-updateDVars :: UpdateDVars -> DVars -> DVars
-updateDVars (DVarsAdvanceBy dt) = DVars.advanceBy dt
-updateDVars (DVarsInsert m) = DVars.insert m
-    
-instance Arbitrary UpdateDVars where
-    arbitrary = do
-        dt <- fmap abs arbitrary
-        m <- arbitrary
-        elements [ DVarsAdvanceBy dt
-                 , DVarsInsert (messageFrom m, messageTo m)
-                 ]
-
-instance Arbitrary DVars where
-    arbitrary = do
-        (EmptyDVars sint rint t0) <- arbitrary
-        us <- arbitrary
-        return $ foldr updateDVars (DVars.empty sint rint t0) us
-
-data DVarsWithSender = DVarsWithSender SenderId DVars deriving (Show)
-instance Arbitrary DVarsWithSender where
-    arbitrary = do
-        dvars <- arbitrary
-        us <- arbitrary
-        s <- elements $ (0:) $ concat $ flip mapMaybe us $ \u ->
-                 case u of
-                     DVarsAdvanceBy _ -> Nothing
-                     DVarsInsert (s,rs) -> Just $ s:rs
-        return $ DVarsWithSender s $ foldr updateDVars dvars us
-
-data DVarsWithSameIntervalsAndSender =
-        DVarsWithSameIntervalsAndSender SenderId DVars deriving (Show)
-instance Arbitrary DVarsWithSameIntervalsAndSender where
-    arbitrary = do
-        (EmptyDVars int _ t0) <- arbitrary
-        us <- arbitrary
-        s <- elements $ (0:) $ concat $ flip mapMaybe us $ \u ->
-                 case u of
-                     DVarsAdvanceBy _ -> Nothing
-                     DVarsInsert (s,rs) -> Just $ s:rs
-        return $ DVarsWithSameIntervalsAndSender s $
-                     foldr updateDVars (DVars.empty int int t0) us
-
 instance Arbitrary Message where
-    arbitrary = do
-        i <- abs `fmap` arbitrary
-        time <- arbitrary
-        f <- choose (0,5)
-        l <- frequency [ (16, return 1)
-                       , (8, return 2)
-                       , (4, return 3)
-                       , (2, return 4)
-                       , (1, return 5)
-                       ]
-        ts <- replicateM l $ choose (0,5)
-        return $ Message i time f (nub ts)
+    arbitrary = message [0..5] [0..5]
         
-data NonNullMessageList = NonNullMessageList [Message] deriving (Eq, Show)
-instance Arbitrary NonNullMessageList where
-    arbitrary = do
-        m <- arbitrary
-        ms <- arbitrary
-        let ms' = (nubBy ((==) `on` messageId)
-                   . sortBy (compare `on` messageTime)) (m:ms)
-        return $ NonNullMessageList ms'
-
-data MessageList = MessageList [Message] deriving (Eq, Show)
-instance Arbitrary MessageList where
-    arbitrary = do
-        (NonNullMessageList ms) <- arbitrary
-        return $ MessageList $ drop 1 ms
-
-svarsWith :: [Message] -> Gen SVars
-svarsWith ms =
-    let is = (nub . map messageFrom) ms
-        js = (nub . concatMap messageTo) ms
-    in do
+svars :: [SenderId] -> [ReceiverId] -> Gen SVars
+svars is js = do
         p <- choose (0,5)
         q <- choose (0,5)
         ss <- replicateM (length is) (actor p)
@@ -222,39 +135,101 @@ svarsWith ms =
         return $ SVars.fromActors (Map.fromList $ zip is ss)
                                   (Map.fromList $ zip js rs)
 
-dvarsWith :: [Message] -> Gen DVars
-dvarsWith [] = arbitrary
-dvarsWith ms = 
-    let t0 = (minimum . map messageTime) ms
-    in do
+instance Arbitrary SVars where
+    arbitrary = svars [ 0..5 ] [ 0..5 ]
+
+
+dvars :: [SenderId] -> [ReceiverId]
+      -> IntervalSet -> IntervalSet
+      -> UTCTime
+      -> Gen DVars
+dvars is js sint rint t0 = do
+    n <- choose (0,100)
+    dts <- (sort . map (negate . abs)) `fmap` replicateM n arbitrary
+    ms <- replicateM n $ message is js
+    
+    let ts = map ((`addUTCTime` t0) . realToFrac) (dts :: [DiffTime])
+        dv0 = DVars.empty sint rint $ minimum (t0:ts)
+        (dv,_) = DVars.accum dv0 $ zip ts ms
+        dv' = DVars.advanceTo t0 dv
+    
+    return $ dv'
+  
+instance Arbitrary DVars where
+    arbitrary = do
+        (DVarsWithSender _ dv) <- arbitrary
+        return dv
+
+data DVarsWithSender = DVarsWithSender SenderId DVars deriving (Show)
+instance Arbitrary DVarsWithSender where
+    arbitrary = do
+        sv <- arbitrary
+        let ss = Map.keys $ SVars.senders sv
+            rs = Map.keys $ SVars.receivers sv
         sint <- arbitrary
         rint <- arbitrary
-        return $ DVars.empty sint rint t0
+        t0 <- arbitrary
+        dv <- dvars ss rs sint rint t0  
+        
+        s0 <- arbitrary
+        s <- elements (s0:ss)
+        
+        return $ DVarsWithSender s dv
 
-data MessagesWithVars = MessagesWithVars [Message] SVars DVars deriving (Show)
-instance Arbitrary MessagesWithVars where
+data DVarsWithSameIntervalsAndSender =
+        DVarsWithSameIntervalsAndSender SenderId DVars deriving (Show)
+instance Arbitrary DVarsWithSameIntervalsAndSender where
     arbitrary = do
-        (NonNullMessageList ms) <- arbitrary
-        sv <- svarsWith ms
-        dv <- dvarsWith ms
-        return $ MessagesWithVars ms sv dv
+        sv <- arbitrary
+        let ss = Map.keys $ SVars.senders sv
+            rs = Map.keys $ SVars.receivers sv
+        int <- arbitrary
+        t0 <- arbitrary
+        dv <- dvars ss rs int int t0  
+        
+        s0 <- arbitrary
+        s <- elements (s0:ss)
+        
+        return $ DVarsWithSameIntervalsAndSender s dv
 
-data MessageWithVars = MessageWithVars Message SVars DVars deriving (Show)
+
+message :: [SenderId] -> [ReceiverId] -> Gen Message
+message ss rs = do
+    f <- elements ss
+    l <- frequency [ (16, return 1)
+                   , (8, return 2)
+                   , (4, return 3)
+                   , (2, return 4)
+                   , (1, return 5)
+                   ]
+    ts <- fmap nub $ replicateM l $ elements rs
+    return $ Message f ts
+
+data MessagesWithVars =
+    MessagesWithVars SVars DVars [(UTCTime, Message)] deriving (Show)
+instance Arbitrary MessagesWithVars where
+    arbitrary =
+        let ss = [ 0..5 ]
+            rs = [ 0..5 ]
+        in do
+            ms <- arbitrary
+            ts <- sort `fmap` replicateM (length ms + 1) arbitrary
+            sv <- svars ss rs
+            sint <- arbitrary
+            rint <- arbitrary
+            dv <- dvars ss rs sint rint (minimum ts)
+            return $ MessagesWithVars sv dv $ zip ts ms
+
+data MessageWithVars =
+    MessageWithVars SVars DVars Message deriving (Show)
 instance Arbitrary MessageWithVars where
     arbitrary = do
-        (MessageList ms) <- arbitrary
-        dt <- fmap abs arbitrary :: Gen Int
-        m <- arbitrary
-        t <- if null ms then arbitrary
-                        else return $ addUTCTime (realToFrac dt)
-                                                 (messageTime (last ms))
-        let m' = m{ messageTime = t }
-            ms' = ms ++ [m']
-        
-        sv <- svarsWith ms'
-        dv <- dvarsWith ms'
-        return $ MessageWithVars m' sv $ 
-                     (snd . last . snd) (Message.accumDVars dv ms')
+        (MessagesWithVars sv dv _) <- arbitrary
+        let ss = Map.keys $ SVars.senders sv
+            rs = Map.keys $ SVars.receivers sv
+        m <- message ss rs
+        return $ MessageWithVars sv dv m
+
         
 
 tests_SVars = testGroup "SVars"
@@ -289,14 +264,14 @@ prop_SVars_receivers_fromActors ss rs =
     SVars.receivers (SVars.fromActors ss rs) == rs
 
 prop_SVars_lookupDyad_fromActors ss rs = let
-    svars = SVars.fromActors ss rs
-    in and [ SVars.lookupDyad (i,j) svars
+    sv = SVars.fromActors ss rs
+    in and [ SVars.lookupDyad (i,j) sv
                 == SVars.interactions s r
            | (i,s) <- Map.assocs ss, (j,r) <- Map.assocs rs ]
     
 prop_SVars_lookupSender_fromActors ss rs = let
-    svars = SVars.fromActors ss rs
-    in and [ SVars.lookupSender i svars
+    sv = SVars.fromActors ss rs
+    in and [ SVars.lookupSender i sv
                 == [ (j, SVars.interactions s r) | (j,r) <- Map.assocs rs ] 
            | (i,s) <- Map.assocs ss ]
 
@@ -359,7 +334,6 @@ prop_IntervalSet_lookup_before_endpoint (NonEmptyIntervalSet iset) =
 prop_IntervalSet_lookup_after_endpoint (NonEmptyIntervalSet iset) =
     forAll (choose (0,n-1)) $ \i -> let
         t_begin = if i == 0 then 0 else IntervalSet.at (i-1) iset
-        t_end = IntervalSet.at i iset
         t = t_begin + picosecondsToDiffTime 1
         in IntervalSet.lookup t iset == Just i
   where
@@ -425,33 +399,33 @@ tests_DVars = testGroup "DVars"
         , testProperty "lookupDyad (dual)" prop_DVars_lookupDyad_dual
         ]
 
-prop_DVars_senderHistory dvars (f,ts) (NonNegative dt) =
+prop_DVars_senderHistory dv (Message f ts) (NonNegative dt) =
         (History.advanceBy dt
          . flip (foldr History.insert) ts
-         . DVars.senderHistory f) dvars
+         . DVars.senderHistory f) dv
         ==
         (DVars.senderHistory f
          . DVars.advanceBy dt
-         . DVars.insert (f,ts)) dvars
+         . DVars.insert (Message f ts)) dv
 
-prop_DVars_receiverHistory dvars (f,ts) (NonNegative dt) =
+prop_DVars_receiverHistory dv (Message f ts) (NonNegative dt) =
     flip all ts $ \t ->
         (History.advanceBy dt
          . History.insert f
-         . DVars.receiverHistory t) dvars
+         . DVars.receiverHistory t) dv
         ==
         (DVars.receiverHistory t
          . DVars.advanceBy dt
-         . DVars.insert (f,ts)) dvars
+         . DVars.insert (Message f ts)) dv
 
-prop_DVars_lookupSender (DVarsWithSender s dvars) = let
-    rds = DVars.lookupSender s dvars
-    in rds == [ (r, fromJust $ DVars.lookupDyad (s,r) dvars) | (r,_) <- rds ]
+prop_DVars_lookupSender (DVarsWithSender s dv) = let
+    rds = DVars.lookupSender s dv
+    in rds == [ (r, fromJust $ DVars.lookupDyad (s,r) dv) | (r,_) <- rds ]
 
-prop_DVars_lookupDyad_dual (DVarsWithSameIntervalsAndSender s dvars) = let
-    rds = DVars.lookupSender s dvars
-    in and [ fmap dual (DVars.lookupDyad (s,r) dvars)
-                 == DVars.lookupDyad (r,s) dvars
+prop_DVars_lookupDyad_dual (DVarsWithSameIntervalsAndSender s dv) = let
+    rds = DVars.lookupSender s dv
+    in and [ fmap dual (DVars.lookupDyad (s,r) dv)
+                 == DVars.lookupDyad (r,s) dv
            | (r,_) <- rds
            ]
   where
@@ -465,7 +439,7 @@ tests_Summary = testGroup "Summary"
         , testProperty "fromList" prop_Summary_fromList
         ]
 
-prop_Summary_singleton (MessageWithVars m s d) = and
+prop_Summary_singleton (MessageWithVars s d m) = and
     [ Summary.messageCount smry == 1
     , Summary.messageLengthCount smry == Map.singleton (length ts) 1
     , Summary.sendCount smry == Map.singleton f (length ts)
@@ -488,15 +462,15 @@ prop_Summary_singleton (MessageWithVars m s d) = and
   where
     f = messageFrom m
     ts = messageTo m
-    smry = Summary.singleton s (m,d)
+    smry = Summary.singleton s (d,m)
 
-prop_Summary_fromList (MessagesWithVars ms s d) =
-    Summary.fromList s mds
+prop_Summary_fromList (MessagesWithVars s d tms) =
+    Summary.fromList s dms
         == foldl' Summary.union
                   (Summary.empty s)
-                  (map (Summary.singleton s) mds)
+                  (map (Summary.singleton s) dms)
   where
-    (_,mds) = Message.accumDVars d ms
+    (_,dms) = DVars.accum d tms
 
     
 main :: IO ()

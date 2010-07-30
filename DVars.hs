@@ -4,6 +4,7 @@ module DVars (
     insert,
     advanceTo,
     advanceBy,
+    accum,
     lookupSender,
     lookupDyad,
     senderHistory,
@@ -16,17 +17,17 @@ module DVars (
     ) where
         
 import Control.Arrow( second )
+import Data.List( mapAccumL )
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Data.Time
 
 import Actor
 import IntervalSet( IntervalSet, IntervalId )
-import qualified IntervalSet as IntervalSet
 import History( History )
 import qualified History as History
+import Message
 
-data ActorHistory = ActorHistory !(History ReceiverId) !(History SenderId)
 
 data DVars =
     DVars { sendIntervals :: !IntervalSet
@@ -52,8 +53,8 @@ advanceBy dt dvars | dt == 0 = dvars
     t = realToFrac dt `addUTCTime` time dvars
     in advanceTo t dvars
 
-insert :: (SenderId, [ReceiverId]) -> DVars -> DVars
-insert (s,rs) (DVars sint rint t shm rhm) = let
+insert :: Message -> DVars -> DVars
+insert (Message s rs) (DVars sint rint t shm rhm) = let
     shm' = updateHistoryMap sint (s,rs) shm
     rhm' = foldr (updateHistoryMap rint) rhm (zip rs $ repeat [s])
     in DVars sint rint t shm' rhm'
@@ -108,3 +109,10 @@ lookupDyad (s,r) dvars = let
         (Just i, Nothing) -> Just $ Send i
         (Nothing, Just j) -> Just $ Receive j
         (Nothing, Nothing) -> Nothing
+
+accum :: DVars -> [(UTCTime, Message)] -> (DVars, [(DVars, Message)])
+accum =
+    mapAccumL (\d0 (t,m) -> 
+            let d  = advanceTo t d0
+                d' = insert m d
+            in (d', (d,m)))

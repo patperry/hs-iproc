@@ -37,7 +37,7 @@ instance Show IntervalSet where
 
 
 size :: IntervalSet -> Int
-size (IntervalSet n m) = n
+size (IntervalSet n _) = n
 
 at :: IntervalId -> IntervalSet -> DiffTime
 at i (IntervalSet n m) | i < 0 = error "negative index"

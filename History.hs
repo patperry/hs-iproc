@@ -15,7 +15,6 @@ module History (
 
 import Prelude hiding ( lookup )
 
-import Data.List( sort )
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Data.Maybe( listToMaybe )

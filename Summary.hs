@@ -7,7 +7,7 @@ module Summary (
     union,
     ) where
 
-import Data.List( foldl', foldl1', mapAccumL )
+import Data.List( foldl', foldl1' )
 import Data.Map( Map )
 import qualified Data.Map as Map
 
@@ -34,7 +34,7 @@ data Summary =
             } deriving (Eq, Show)
 
 
-fromList :: SVars -> [(Message, DVars)] -> Summary
+fromList :: SVars -> [(DVars, Message)] -> Summary
 fromList sv ms = let
     in foldl' (flip insert) (empty sv) ms
         
@@ -43,12 +43,12 @@ empty sv =
     let x0 = constantVector (SVars.dim sv) 0
     in Summary sv 0 Map.empty Map.empty Map.empty x0 Map.empty Map.empty
 
-singleton :: SVars -> (Message, DVars) -> Summary
+singleton :: SVars -> (DVars, Message) -> Summary
 singleton sv = flip insert (empty sv)
 
 union :: Summary -> Summary -> Summary
 union (Summary sv1 n1 l1 s1 r1 x1 si1 ri1)
-      (Summary sv2 n2 l2 s2 r2 x2 si2 ri2) = let
+      (Summary _sv2 n2 l2 s2 r2 x2 si2 ri2) = let
       sv = sv1
       n = n1 + n2
       l = unionWith' (+) l1 l2
@@ -64,8 +64,8 @@ union (Summary sv1 n1 l1 s1 r1 x1 si1 ri1)
                m
                (Map.toList m')
 
-insert :: (Message, DVars) -> Summary -> Summary
-insert (m,dv) (Summary sv n l s r x si ri) = let
+insert :: (DVars, Message) -> Summary -> Summary
+insert (dv,m) (Summary sv n l s r x si ri) = let
     n' = n + 1
     l' = Map.insertWith' (+) (length ts) 1 l
     s' = Map.insertWith' (+) f (length ts) s
