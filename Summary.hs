@@ -75,11 +75,11 @@ insert (c,m) (Summary sv dv n l s r x si ri) = let
     x' = addVector x $
              foldl1' addVector [ SVars.lookupDyad (f,t) sv | t <- ts ]
     si' = foldl' (flip $ \t -> 
-               case DVars.lookupDyad (f,t) c dv >>= DVars.send of
+               case DVars.lookupDyad c (f,t) dv >>= DVars.send of
                    Just i  -> Map.insertWith' (+) i 1
                    Nothing -> id) si ts
     ri' = foldl' (flip $ \t ->
-               case DVars.lookupDyad (f,t) c dv >>= DVars.receive of
+               case DVars.lookupDyad c (f,t) dv >>= DVars.receive of
                    Just i  -> Map.insertWith' (+) i 1
                    Nothing -> id) ri ts
     in Summary sv dv n' l' s' r' x' si' ri'

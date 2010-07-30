@@ -62,8 +62,8 @@ sendReceive dvar = case dvar of
 context :: UTCTime -> DVars -> Context
 context t0 (DVars sint rint) = Context.empty sint rint t0
 
-lookupSender :: SenderId -> Context -> DVars -> [(ReceiverId, DVar)]
-lookupSender s c _ = let
+lookupSender :: Context -> SenderId -> DVars -> [(ReceiverId, DVar)]
+lookupSender c s _ = let
     m = Map.fromList $ map (second Send) $
             History.pastEvents $ Context.senderHistory s c
     m' = foldl' (flip $ uncurry $ Map.insertWith' (\(Receive j) (Send i) ->
@@ -72,8 +72,8 @@ lookupSender s c _ = let
                 History.pastEvents $ Context.receiverHistory s c
     in Map.toList m'
 
-lookupDyad :: (SenderId, ReceiverId) -> Context -> DVars -> Maybe DVar
-lookupDyad (s,r) c _ = let
+lookupDyad :: Context -> (SenderId, ReceiverId) -> DVars -> Maybe DVar
+lookupDyad c (s,r) _ = let
     mi = History.lookup r $ Context.senderHistory s c
     mj = History.lookup r $ Context.receiverHistory s c
     in case (mi,mj) of

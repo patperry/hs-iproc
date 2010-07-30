@@ -433,16 +433,16 @@ tests_DVars = testGroup "DVars"
 
 prop_DVars_lookupSender (DVarsWithContext c dv) =
     flip all (Context.senders c) $ \s -> let
-        rds = DVars.lookupSender s c dv
-        in rds == [ (r, fromJust $ DVars.lookupDyad (s,r) c dv)
+        rds = DVars.lookupSender c s dv
+        in rds == [ (r, fromJust $ DVars.lookupDyad c (s,r) dv)
                   | (r,_) <- rds ]
 
 prop_DVars_lookupDyad_dual (ActorIdList ss) (ActorIdList rs) t0 int =
     forAll (context ss rs t0 dv) $ \c ->
         flip all (Context.senders c) $ \s ->
         flip all (Context.receivers c) $ \r ->
-            fmap dual (DVars.lookupDyad (s,r) c dv)
-                == DVars.lookupDyad (r,s) c dv
+            fmap dual (DVars.lookupDyad c (s,r) dv)
+                == DVars.lookupDyad c (r,s) dv
   where
     dv = DVars.fromIntervals int int
 
@@ -466,13 +466,13 @@ prop_Summary_singleton (MessageWithVars s d c m) = and
     , Summary.dvarsSendSum smry
         == foldl' (flip $ \i -> Map.insertWith' (+) i 1)
                   Map.empty
-                  (catMaybes [ DVars.lookupDyad (f,t) c d
+                  (catMaybes [ DVars.lookupDyad c (f,t) d
                                >>= DVars.send
                              | t <- ts ])
     , Summary.dvarsReceiveSum smry
         == foldl' (flip $ \i -> Map.insertWith' (+) i 1)
                   Map.empty
-                  (catMaybes [ DVars.lookupDyad (f,t) c d
+                  (catMaybes [ DVars.lookupDyad c (f,t) d
                                >>= DVars.receive
                              | t <- ts ])
     ]
