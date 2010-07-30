@@ -26,7 +26,7 @@ import IntervalSet( IntervalSet, IntervalId )
 import qualified IntervalSet as IntervalSet
 
 
-data EventDiffTime = EventDiffTime !IntervalId !DiffTime deriving (Eq, Show)
+data EventDiffTime = EventDiffTime !IntervalId !NominalDiffTime deriving (Eq, Show)
 
 data History e = 
     History { intervalSet :: !IntervalSet
@@ -56,7 +56,7 @@ pastEvents = map unEventDiffTime . Map.assocs . pastEventMap
   where
     unEventDiffTime (e, EventDiffTime i _) = (e, i)
 
-pastEventsWithTimes :: History e -> [(e, DiffTime)]
+pastEventsWithTimes :: History e -> [(e, NominalDiffTime)]
 pastEventsWithTimes = map unEventDiffTime . Map.assocs . pastEventMap
   where
     unEventDiffTime (e, EventDiffTime _ t) = (e, t)
@@ -65,7 +65,7 @@ advanceTo :: (Ord e) => UTCTime -> History e -> History e
 advanceTo t h@(History iset t0 past cur) | t == t0 = h
                                          | t < t0 = error "negative time difference"
                                          | otherwise = let
-    dt = realToFrac $ t `diffUTCTime` t0
+    dt = t `diffUTCTime` t0
     iset_assocs = IntervalSet.assocs iset
     past' = flip Map.mapMaybe past $ \(EventDiffTime i d) ->
                 let d'  = d + dt
@@ -82,9 +82,9 @@ advanceTo t h@(History iset t0 past cur) | t == t0 = h
                              
     in History iset t past'' Set.empty
 
-advanceBy :: (Ord e) => DiffTime -> History e -> History e
+advanceBy :: (Ord e) => NominalDiffTime -> History e -> History e
 advanceBy dt h | dt == 0 = h
                | dt < 0 = error "negative time difference"
                | otherwise = let
-    t = realToFrac dt `addUTCTime` time h
+    t = dt `addUTCTime` time h
     in advanceTo t h

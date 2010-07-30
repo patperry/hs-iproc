@@ -46,11 +46,11 @@ advanceTo t' dvars@(DVars sint rint t shm rhm) | t' < t = error "negative time d
                                                | otherwise =
     DVars sint rint t' shm rhm
 
-advanceBy :: DiffTime -> DVars -> DVars
+advanceBy :: NominalDiffTime -> DVars -> DVars
 advanceBy dt dvars | dt == 0 = dvars
                    | dt < 0 = error "negative time difference"
                    | otherwise = let
-    t = realToFrac dt `addUTCTime` time dvars
+    t = dt `addUTCTime` time dvars
     in advanceTo t dvars
 
 insert :: Message -> DVars -> DVars

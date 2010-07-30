@@ -4,7 +4,7 @@ module Main
 
 import Control.Monad( replicateM )
 import Data.Time
-import Data.Time.Clock.POSIX
+import Data.Time.Clock.POSIX( posixSecondsToUTCTime )
 import Data.Function( on )
 import Data.List( foldl', foldl1', nub, nubBy, sort )
 import Data.Map( Map )
@@ -61,12 +61,12 @@ instance Arbitrary (Map ActorId Actor) where
         p <- choose (0,5)
         actorMap p
 
-instance Arbitrary DiffTime where
+instance Arbitrary NominalDiffTime where
     arbitrary = do
         x <- arbitrary :: Gen Integer
         return $ fromIntegral x
 
-data IntervalList = IntervalList [DiffTime] deriving (Show)
+data IntervalList = IntervalList [NominalDiffTime] deriving (Show)
 instance Arbitrary IntervalList where
     arbitrary = do
         ts <- arbitrary
@@ -103,7 +103,7 @@ instance Arbitrary EmptyHistory where
         t0 <- arbitrary
         return $ EmptyHistory iset t0
 
-data UpdateHistory e = HistoryAdvanceBy DiffTime
+data UpdateHistory e = HistoryAdvanceBy NominalDiffTime
                      | HistoryInsert e
     deriving (Eq, Show)
     
@@ -148,7 +148,7 @@ dvars is js sint rint t0 = do
     dts <- (sort . map (negate . abs)) `fmap` replicateM n arbitrary
     ms <- replicateM n $ message is js
     
-    let ts = map ((`addUTCTime` t0) . realToFrac) (dts :: [DiffTime])
+    let ts = map (`addUTCTime` t0) dts
         dv0 = DVars.empty sint rint $ minimum (t0:ts)
         (dv,_) = DVars.accum dv0 $ zip ts ms
         dv' = DVars.advanceTo t0 dv
@@ -323,7 +323,7 @@ prop_IntervalSet_lookup_before_endpoint (NonEmptyIntervalSet iset) =
     forAll (choose (0,n-1)) $ \i -> let
         t_begin = if i == 0 then 0 else IntervalSet.at (i-1) iset
         t_end = IntervalSet.at i iset
-        t = t_end - picosecondsToDiffTime 1
+        t = pred t_end
         in IntervalSet.lookup t iset ==
             if t == 0 then Nothing
                       else if t == t_begin then Just (i-1)
@@ -334,13 +334,13 @@ prop_IntervalSet_lookup_before_endpoint (NonEmptyIntervalSet iset) =
 prop_IntervalSet_lookup_after_endpoint (NonEmptyIntervalSet iset) =
     forAll (choose (0,n-1)) $ \i -> let
         t_begin = if i == 0 then 0 else IntervalSet.at (i-1) iset
-        t = t_begin + picosecondsToDiffTime 1
+        t = succ t_begin
         in IntervalSet.lookup t iset == Just i
   where
     n = IntervalSet.size iset
 
 prop_IntervalSet_lookup_beyond_last (NonEmptyIntervalSet iset) =
-    IntervalSet.lookup (tlast + picosecondsToDiffTime 1) iset == Nothing
+    IntervalSet.lookup (succ tlast) iset == Nothing
   where
     n = IntervalSet.size iset
     tlast = IntervalSet.at (n - 1) iset
@@ -382,13 +382,13 @@ prop_History_pastEvents_advanceBy h (NonNegative dt) =
     iset = History.intervalSet h
     _ = h :: History Int
     
-prop_History_lookup_advanceBy_insert h e dt =
+prop_History_lookup_advanceBy_insert h e (NonNegative dt) =
     (History.lookup e
      . History.advanceBy dt'
      . History.insert e) h
         == IntervalSet.lookup dt' (History.intervalSet h)
   where
-    dt' = abs dt + picosecondsToDiffTime 1
+    dt' = succ dt
     _ = e :: Int
 
 
