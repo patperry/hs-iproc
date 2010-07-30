@@ -17,6 +17,7 @@ import qualified DVars as DVars
 
 data Params =
     Params { svars :: !SVars
+           , dvars :: !DVars
            , staticCoefs :: !(Vector Double)
            , sendCoefs :: !(Vector Double)
            , receiveCoefs :: !(Vector Double)
@@ -28,6 +29,7 @@ data Params =
 defaultParams :: SVars -> DVars -> Params
 defaultParams sv dv =
     Params sv
+           dv
            (constantVector (SVars.dim sv) 0)
            (constantVector (Intervals.size $ DVars.sendIntervals dv) 0)
            (constantVector (Intervals.size $ DVars.receiveIntervals dv) 0)

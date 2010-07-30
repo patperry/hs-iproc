@@ -2,7 +2,6 @@ module SenderModel (
     SenderModel,
     params,
     sender,
-    dvars,
     
     senderModel,
     update,
@@ -28,7 +27,7 @@ import qualified Data.Map as Map
 import Numeric.LinearAlgebra
 
 import Actor( Receiver, ReceiverId, Sender, SenderId )
-import DVars( DVars, DVar(..) )
+import DVars( DVars, DVar(..), Context )
 import qualified DVars as DVars
 import Params( Params )
 import qualified Params as Params
@@ -39,7 +38,6 @@ import qualified SVars as SVars
 data SenderModel = 
     SenderModel { params :: !Params
                 , sender :: !SenderId
-                , dvars :: !DVars
                 , static :: !StaticWeights
                 , dynamic :: !DynamicWeights
                 }
@@ -59,15 +57,15 @@ data DynamicWeights =
     deriving (Eq, Show)
 
 
-senderModel :: Params -> SenderId -> DVars -> SenderModel
-senderModel p s dv = let
+senderModel :: Params -> SenderId -> Context -> SenderModel
+senderModel p s c = let
     sw = makeStaticWeights p s
-    dw = makeDynamicWeights p s sw dv
-    in SenderModel p s dv sw dw
+    dw = makeDynamicWeights p s sw c
+    in SenderModel p s sw dw
 
-update :: DVars -> SenderModel -> SenderModel
-update dv (SenderModel p s _ sw _) =
-    SenderModel p s dv sw $ makeDynamicWeights p s sw dv
+update :: Context -> SenderModel -> SenderModel
+update c (SenderModel p s sw _) =
+    SenderModel p s sw $ makeDynamicWeights p s sw c
 
 weightSum :: SenderModel -> Double
 weightSum = dynamicWeightSum . dynamic
@@ -144,9 +142,9 @@ staticWeightLogPair r sw =
   where
     neginf = -1/0
 
-makeDynamicWeights :: Params -> SenderId -> StaticWeights -> DVars -> DynamicWeights
-makeDynamicWeights p s sw dv = let
-    rws = flip map (DVars.lookupSender s dv) $ \(r,v) -> let
+makeDynamicWeights :: Params -> SenderId -> StaticWeights -> Context -> DynamicWeights
+makeDynamicWeights p s sw c = let
+    rws = flip map (DVars.lookupSender s c dv) $ \(r,v) -> let
         (w0, eta0) = staticWeightLogPair r sw
         eta_diff = logWeight v
         eta = eta0 + eta_diff
@@ -160,6 +158,7 @@ makeDynamicWeights p s sw dv = let
     in DynamicWeights (Map.fromList rws) w_sum diff_sum
               
   where
+    dv = Params.dvars p
     scoefs = Params.sendCoefs p
     rcoefs = Params.receiveCoefs p
     

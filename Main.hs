@@ -13,14 +13,16 @@ import Numeric.LinearAlgebra
        
         
 import Actor
+import qualified Context as Context
+import qualified DVars as DVars
+import Enron
 import Intervals( Intervals )
 import qualified Intervals as Intervals
-import qualified DVars as DVars
-import qualified SVars as SVars
-import Params( defaultParams )
-import Enron
 import Message
+import Params( defaultParams )
+import qualified SVars as SVars
 import qualified Summary as Summary
+
      
 fromEmail :: Email -> (UTCTime, Message)
 fromEmail (Email _ _ time _ f ts) =
@@ -40,8 +42,8 @@ sendIntervals = Intervals.fromList $
     map (realToFrac . (3600*) . (2^^)) $    
         [ -7..2 ] ++ [ 4..13 ]
 
-recvIntervals :: Intervals
-recvIntervals = Intervals.fromList $
+receiveIntervals :: Intervals
+receiveIntervals = Intervals.fromList $
     map (realToFrac . (3600*) . (2^^)) $
         [ -7..11 ]
         
@@ -50,12 +52,13 @@ main = do
     as <- (Map.fromList . map fromEmployee) `fmap` fetchEmployeeList' conn
     tms <- map fromEmail `fmap` fetchEmailList' conn
     let sv = SVars.fromActors as as
+        dv = DVars.fromIntervals sendIntervals receiveIntervals 
         t0 = if null tms then posixSecondsToUTCTime 0
                          else (fst . head) tms
-        dv0 = DVars.empty sendIntervals recvIntervals t0
-        mds = snd $ DVars.accum dv0 tms
-        smry = Summary.fromList sv mds
-        p = defaultParams sv dv0
+        c0 = DVars.context t0 dv
+        cms = snd $ Context.accum c0 tms
+        smry = Summary.fromList sv dv cms
+        p = defaultParams sv dv
         -- dev = foldl' updateDeviance (emptyDeviance sv dv p) $ zip ms hs
         
     putStrLn $ "message count: " ++ show (Summary.messageCount smry)
