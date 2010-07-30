@@ -2,6 +2,7 @@
 module Main
     where
 
+import Control.Arrow( second )
 import Control.Monad( replicateM )
 import Data.Time
 import Data.Time.Clock.POSIX( posixSecondsToUTCTime )
@@ -434,21 +435,23 @@ tests_DVars = testGroup "DVars"
 prop_DVars_lookupSender (DVarsWithContext c dv) =
     flip all (Context.senders c) $ \s -> let
         rds = DVars.lookupSender c s dv
-        in rds == [ (r, fromJust $ DVars.lookupDyad c (s,r) dv)
+        in map (second sort) rds
+               == [ (r, sort $ DVars.lookupDyad c (s,r) dv)
                   | (r,_) <- rds ]
 
 prop_DVars_lookupDyad_dual (ActorIdList ss) (ActorIdList rs) t0 int =
     forAll (context ss rs t0 dv) $ \c ->
         flip all (Context.senders c) $ \s ->
         flip all (Context.receivers c) $ \r ->
-            fmap dual (DVars.lookupDyad c (s,r) dv)
-                == DVars.lookupDyad c (r,s) dv
+            (dual . sort) (DVars.lookupDyad c (s,r) dv)
+                == sort (DVars.lookupDyad c (r,s) dv)
   where
     dv = DVars.fromIntervals int int
 
-    dual (Send k) = Receive k
-    dual (Receive l) = Send l
-    dual (SendAndReceive k l) = SendAndReceive l k
+    dual [] = []
+    dual [ Send i ] = [ Receive i ]
+    dual [ Receive i' ] = [ Send i' ]
+    dual [ Send i, Receive i' ] = [ Send i', Receive i ]
 
 
 tests_Summary = testGroup "Summary"
@@ -464,17 +467,15 @@ prop_Summary_singleton (MessageWithVars s d c m) = and
     , Summary.svarsSum smry
         == foldl1' addVector [ SVars.lookupDyad (f,t) s | t <- ts ]
     , Summary.dvarsSendSum smry
-        == foldl' (flip $ \i -> Map.insertWith' (+) i 1)
-                  Map.empty
-                  (catMaybes [ DVars.lookupDyad c (f,t) d
-                               >>= DVars.send
-                             | t <- ts ])
+        == (foldl' (flip $ \i -> Map.insertWith' (+) i 1)
+                  Map.empty $ concat $
+                  [ mapMaybe DVars.send $ DVars.lookupDyad c (f,t) d
+                  | t <- ts ])
     , Summary.dvarsReceiveSum smry
-        == foldl' (flip $ \i -> Map.insertWith' (+) i 1)
-                  Map.empty
-                  (catMaybes [ DVars.lookupDyad c (f,t) d
-                               >>= DVars.receive
-                             | t <- ts ])
+        == (foldl' (flip $ \i -> Map.insertWith' (+) i 1)
+                  Map.empty $ concat $
+                  [ mapMaybe DVars.receive $ DVars.lookupDyad c (f,t) d
+                  | t <- ts ])
     ]
   where
     f = messageFrom m

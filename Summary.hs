@@ -10,6 +10,7 @@ module Summary (
 import Data.List( foldl', foldl1' )
 import Data.Map( Map )
 import qualified Data.Map as Map
+import Data.Maybe( mapMaybe )
 
 import Numeric.LinearAlgebra
 
@@ -75,13 +76,13 @@ insert (c,m) (Summary sv dv n l s r x si ri) = let
     x' = addVector x $
              foldl1' addVector [ SVars.lookupDyad (f,t) sv | t <- ts ]
     si' = foldl' (flip $ \t -> 
-               case DVars.lookupDyad c (f,t) dv >>= DVars.send of
-                   Just i  -> Map.insertWith' (+) i 1
-                   Nothing -> id) si ts
+               case mapMaybe DVars.send (DVars.lookupDyad c (f,t) dv) of
+                   [i] -> Map.insertWith' (+) i 1
+                   []  -> id) si ts
     ri' = foldl' (flip $ \t ->
-               case DVars.lookupDyad c (f,t) dv >>= DVars.receive of
-                   Just i  -> Map.insertWith' (+) i 1
-                   Nothing -> id) ri ts
+               case mapMaybe DVars.receive (DVars.lookupDyad c (f,t) dv) of
+                   [i'] -> Map.insertWith' (+) i' 1
+                   [] -> id) ri ts
     in Summary sv dv n' l' s' r' x' si' ri'
   where
     f = messageFrom m

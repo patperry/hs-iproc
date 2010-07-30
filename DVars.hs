@@ -12,13 +12,11 @@ module DVars (
     DVar(..),
     send,
     receive,
-    sendReceive,
     
     ) where
         
-import Control.Arrow( second )
-import Data.List( foldl' )
 import qualified Data.Map as Map
+import Data.Maybe( maybeToList )
 import Data.Time
 
 import Actor
@@ -35,8 +33,7 @@ data DVars =
 
 data DVar = Send !IntervalId
           | Receive !IntervalId
-          | SendAndReceive !IntervalId !IntervalId
-    deriving (Eq, Show)
+    deriving (Eq, Show, Ord)
 
 fromIntervals :: Intervals -> Intervals -> DVars
 fromIntervals = DVars
@@ -45,39 +42,31 @@ send :: DVar -> Maybe IntervalId
 send dvar = case dvar of
     Send i -> Just i
     Receive _ -> Nothing
-    SendAndReceive i _ -> Just i
 
 receive :: DVar -> Maybe IntervalId
 receive dvar = case dvar of
     Send _ -> Nothing
     Receive i' -> Just i'
-    SendAndReceive _ i' -> Just i'
     
-sendReceive :: DVar -> Maybe (IntervalId, IntervalId)
-sendReceive dvar = case dvar of
-    Send _ -> Nothing
-    Receive _ -> Nothing
-    SendAndReceive i i' -> Just (i,i')
-
 context :: UTCTime -> DVars -> Context
 context t0 (DVars sint rint) = Context.empty sint rint t0
 
-lookupSender :: Context -> SenderId -> DVars -> [(ReceiverId, DVar)]
-lookupSender c s _ = let
-    m = Map.fromList $ map (second Send) $
-            History.pastEvents $ Context.senderHistory s c
-    m' = foldl' (flip $ uncurry $ Map.insertWith' (\(Receive j) (Send i) ->
-                    SendAndReceive i j)) m $
-            map (second Receive) $
-                History.pastEvents $ Context.receiverHistory s c
-    in Map.toList m'
+lookupSender :: Context -> SenderId -> DVars -> [(ReceiverId, [DVar])]
+lookupSender c s _ =
+    Map.toList $ Map.unionsWith (++) $ map Map.fromList
+        [ [ (r, [Send i])
+          | (r,i) <- History.pastEvents $ Context.senderHistory s c
+          ]
+        , [ (r, [Receive i'])
+          | (r,i') <- History.pastEvents $ Context.receiverHistory s c
+          ]
+        ]
+  where
+    singleton a = [a]
 
-lookupDyad :: Context -> (SenderId, ReceiverId) -> DVars -> Maybe DVar
-lookupDyad c (s,r) _ = let
-    mi = History.lookup r $ Context.senderHistory s c
-    mj = History.lookup r $ Context.receiverHistory s c
-    in case (mi,mj) of
-        (Just i, Just j) -> Just $ SendAndReceive i j
-        (Just i, Nothing) -> Just $ Send i
-        (Nothing, Just j) -> Just $ Receive j
-        (Nothing, Nothing) -> Nothing
+lookupDyad :: Context -> (SenderId, ReceiverId) -> DVars -> [DVar]
+lookupDyad c (s,r) _ =
+    concatMap maybeToList
+        [ fmap Send $ History.lookup r $ Context.senderHistory s c
+        , fmap Receive $ History.lookup r $ Context.receiverHistory s c
+        ]
