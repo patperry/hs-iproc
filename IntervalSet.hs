@@ -18,34 +18,34 @@ import Data.Time
 
 
 type IntervalId = Int
-data IntervalSet = IntervalSet !Int ![NominalDiffTime] deriving (Eq)
+newtype IntervalSet = IntervalSet [NominalDiffTime] deriving (Eq)
 
 fromList :: [NominalDiffTime] -> IntervalSet
 fromList ts | sort ts /= ts = error "time interval list is not sorted"
             | nub ts /= ts = error "time interval list is not unique"
             | any (<= 0) ts = error "non-positive time interval"
             | otherwise =
-        IntervalSet (length ts) ts
+        IntervalSet ts
 
 toList :: IntervalSet -> [NominalDiffTime]
-toList (IntervalSet _ ts) = ts
+toList (IntervalSet ts) = ts
 
 instance Show IntervalSet where
     show iset = "fromList " ++ show (toList iset)
 
 
 size :: IntervalSet -> Int
-size (IntervalSet n _) = n
+size (IntervalSet ts) = length ts
 
 at :: IntervalId -> IntervalSet -> NominalDiffTime
-at i (IntervalSet _ ts) = ts !! i
+at i (IntervalSet ts) = ts !! i
 
 lookup ::  NominalDiffTime -> IntervalSet -> Maybe IntervalId
-lookup t (IntervalSet _ ts) | t <= 0 = Nothing
-                            | otherwise = do
+lookup t (IntervalSet ts) | t <= 0 = Nothing
+                          | otherwise = do
     i <- findIndex (>= t) $ 0:ts
     return $ pred i
     
 assocs :: IntervalSet -> [(IntervalId,NominalDiffTime)]
-assocs (IntervalSet _ ts) = zip [ 0.. ] ts
+assocs (IntervalSet ts) = zip [ 0.. ] ts
 
