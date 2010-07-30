@@ -1,18 +1,24 @@
 module SenderModel (
     SenderModel,
+    params,
+    sender,
+    dvars,
+    
     senderModel,
     update,
 
     prob,
     logProb,
+    dvarProbs,
     
     weight,
     staticWeight,
-    dynamicWeight,
+    weightDiff,
 
     weightSum,
+    weightDiffSum,
     staticWeights,
-    dynamicWeights,
+    weightDiffs,
     ) where
 
 import Data.List( foldl' )
@@ -32,7 +38,8 @@ import qualified SVars as SVars
 
 data SenderModel = 
     SenderModel { params :: !Params
-                , senderId :: !SenderId
+                , sender :: !SenderId
+                , dvars :: !DVars
                 , static :: !StaticWeights
                 , dynamic :: !DynamicWeights
                 }
@@ -45,7 +52,7 @@ data StaticWeights =
     deriving (Eq, Show)
 
 data DynamicWeights =
-    DynamicWeights { dynamicWeightDiffPairMap :: !(Map ReceiverId (Double, Double))
+    DynamicWeights { dynamicWeightDiffPairMap :: !(Map ReceiverId (DVar, Double, Double))
                    , dynamicWeightSum :: !Double
                    , dynamicWeightDiffSum :: !Double
                    }
@@ -56,14 +63,17 @@ senderModel :: Params -> SenderId -> DVars -> SenderModel
 senderModel p s dv = let
     sw = makeStaticWeights p s
     dw = makeDynamicWeights p s sw dv
-    in SenderModel p s sw dw
+    in SenderModel p s dv sw dw
 
 update :: DVars -> SenderModel -> SenderModel
-update dv (SenderModel p s sw _) =
-    SenderModel p s sw $ makeDynamicWeights p s sw dv
+update dv (SenderModel p s _ sw _) =
+    SenderModel p s dv sw $ makeDynamicWeights p s sw dv
 
 weightSum :: SenderModel -> Double
 weightSum = dynamicWeightSum . dynamic
+
+weightDiffSum :: SenderModel -> Double
+weightDiffSum = dynamicWeightDiffSum . dynamic
 
 prob :: ReceiverId -> SenderModel -> Double
 prob r sm = weight r sm / weightSum sm
@@ -74,17 +84,17 @@ logProb r sm = log (prob r sm)
 weight :: ReceiverId -> SenderModel -> Double
 weight r sm =
     case Map.lookup r (dynamicWeightDiffPairMap $ dynamic sm) of
-        Just (w,_) -> w
+        Just (_,w,_) -> w
         Nothing -> staticWeight r sm
 
 staticWeight :: ReceiverId -> SenderModel -> Double
 staticWeight r sm  =
     fst $ staticWeightLogPair r $ static sm
 
-dynamicWeight :: ReceiverId -> SenderModel -> Double
-dynamicWeight r sm =
+weightDiff :: ReceiverId -> SenderModel -> Double
+weightDiff r sm =
     case Map.lookup r (dynamicWeightDiffPairMap $ dynamic sm) of
-        Just (_,d) -> d
+        Just (_,_,d) -> d
         Nothing -> 0
     
 staticWeights :: SenderModel -> [(ReceiverId, Double)]
@@ -93,11 +103,19 @@ staticWeights sm =
     | (r, (w,_)) <- Map.toList $ staticWeightLogPairMap $ static sm
     ]
 
-dynamicWeights :: SenderModel -> [(ReceiverId, Double)]
-dynamicWeights sm =
+weightDiffs :: SenderModel -> [(ReceiverId, Double)]
+weightDiffs sm =
     [ (r,d)
-    | (r, (_,d)) <- Map.toList $ dynamicWeightDiffPairMap $ dynamic sm
+    | (r, (v,_,d)) <- Map.toList $ dynamicWeightDiffPairMap $ dynamic sm
     ]
+
+dvarProbs :: SenderModel -> [(DVar, Double)]
+dvarProbs sm =
+    [ (v,w / w_sum )
+    | (v,w,_) <- Map.elems $ dynamicWeightDiffPairMap $ dynamic sm
+    ]
+  where
+    w_sum = weightSum sm
 
 makeStaticWeights :: Params -> SenderId -> StaticWeights
 makeStaticWeights p s = let
@@ -128,18 +146,18 @@ staticWeightLogPair r sw =
 
 makeDynamicWeights :: Params -> SenderId -> StaticWeights -> DVars -> DynamicWeights
 makeDynamicWeights p s sw dv = let
-    wds = flip map (DVars.lookupSender s dv) $ \(r,v) -> let
+    rws = flip map (DVars.lookupSender s dv) $ \(r,v) -> let
         (w0, eta0) = staticWeightLogPair r sw
         eta_diff = logWeight v
         eta = eta0 + eta_diff
         w = exp eta
         diff = w - w0
-        in w `seq` diff `seq` (r, (w,diff))
+        in w `seq` diff `seq` (r,(v,w,diff))
         
-    diff_sum = foldl' (+) 0 $ (snd . unzip . snd . unzip) wds
+    diff_sum = foldl' (+) 0 $ [ diff | (_,(_,_,diff)) <- rws ]
     w_sum = staticWeightSum sw + diff_sum
     
-    in DynamicWeights (Map.fromList wds) w_sum diff_sum
+    in DynamicWeights (Map.fromList rws) w_sum diff_sum
               
   where
     scoefs = Params.sendCoefs p

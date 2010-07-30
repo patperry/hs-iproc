@@ -11,8 +11,9 @@ module DVars (
     receiverHistory,
     
     DVar(..),
-    sendIntervalId,
-    receiveIntervalId,
+    send,
+    receive,
+    sendReceive,
     
     ) where
         
@@ -80,17 +81,23 @@ data DVar = Send !IntervalId
           | SendAndReceive !IntervalId !IntervalId
     deriving (Eq, Show)
 
-sendIntervalId :: DVar -> Maybe IntervalId
-sendIntervalId dvar = case dvar of
+send :: DVar -> Maybe IntervalId
+send dvar = case dvar of
     Send i -> Just i
     Receive _ -> Nothing
     SendAndReceive i _ -> Just i
 
-receiveIntervalId :: DVar -> Maybe IntervalId
-receiveIntervalId dvar = case dvar of
+receive :: DVar -> Maybe IntervalId
+receive dvar = case dvar of
     Send _ -> Nothing
-    Receive i -> Just i
-    SendAndReceive _ i -> Just i
+    Receive i' -> Just i'
+    SendAndReceive _ i' -> Just i'
+    
+sendReceive :: DVar -> Maybe (IntervalId, IntervalId)
+sendReceive dvar = case dvar of
+    Send _ -> Nothing
+    Receive _ -> Nothing
+    SendAndReceive i i' -> Just (i,i')
 
 lookupSender :: SenderId -> DVars -> [(ReceiverId, DVar)]
 lookupSender s dvars = let

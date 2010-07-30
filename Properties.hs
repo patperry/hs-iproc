@@ -450,13 +450,13 @@ prop_Summary_singleton (MessageWithVars s d m) = and
         == foldl' (flip $ \i -> Map.insertWith' (+) i 1)
                   Map.empty
                   (catMaybes [ DVars.lookupDyad (f,t) d
-                               >>= DVars.sendIntervalId
+                               >>= DVars.send
                              | t <- ts ])
     , Summary.dvarsReceiveSum smry
         == foldl' (flip $ \i -> Map.insertWith' (+) i 1)
                   Map.empty
                   (catMaybes [ DVars.lookupDyad (f,t) d
-                               >>= DVars.receiveIntervalId
+                               >>= DVars.receive
                              | t <- ts ])
     ]
   where
