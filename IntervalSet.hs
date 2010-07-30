@@ -14,23 +14,21 @@ module IntervalSet (
 import Prelude hiding ( lookup )
 
 import Data.List( findIndex, nub, sort )
-import Data.Map( Map )
-import qualified Data.Map as Map
-import Data.Maybe( fromJust )
 import Data.Time
 
+
 type IntervalId = Int
-data IntervalSet = IntervalSet !Int !(Map IntervalId NominalDiffTime) deriving (Eq)
+data IntervalSet = IntervalSet !Int ![NominalDiffTime] deriving (Eq)
 
 fromList :: [NominalDiffTime] -> IntervalSet
 fromList ts | sort ts /= ts = error "time interval list is not sorted"
             | nub ts /= ts = error "time interval list is not unique"
             | any (<= 0) ts = error "non-positive time interval"
             | otherwise =
-        IntervalSet (length ts) $ Map.fromList $ zip [ 0.. ] ts
+        IntervalSet (length ts) ts
 
 toList :: IntervalSet -> [NominalDiffTime]
-toList (IntervalSet _ m) = Map.elems m
+toList (IntervalSet _ ts) = ts
 
 instance Show IntervalSet where
     show iset = "fromList " ++ show (toList iset)
@@ -40,17 +38,14 @@ size :: IntervalSet -> Int
 size (IntervalSet n _) = n
 
 at :: IntervalId -> IntervalSet -> NominalDiffTime
-at i (IntervalSet n m) | i < 0 = error "negative index"
-                       | i >= n = error "index too large"
-                       | otherwise =
-    fromJust $ Map.lookup i m
+at i (IntervalSet _ ts) = ts !! i
 
 lookup ::  NominalDiffTime -> IntervalSet -> Maybe IntervalId
-lookup t (IntervalSet _ m) | t <= 0 = Nothing
-                           | otherwise = do
-    i <- findIndex (>= t) $ 0:(Map.elems m)
+lookup t (IntervalSet _ ts) | t <= 0 = Nothing
+                            | otherwise = do
+    i <- findIndex (>= t) $ 0:ts
     return $ pred i
     
 assocs :: IntervalSet -> [(IntervalId,NominalDiffTime)]
-assocs (IntervalSet _ m) = Map.assocs m
+assocs (IntervalSet _ ts) = zip [ 0.. ] ts
 
