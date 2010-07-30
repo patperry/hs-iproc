@@ -23,21 +23,21 @@ import qualified Data.Map as Map
 import Data.Time
 
 import Actor
-import IntervalSet( IntervalSet, IntervalId )
+import Intervals( Intervals, IntervalId )
 import History( History )
 import qualified History as History
 import Message
 
 
 data DVars =
-    DVars { sendIntervals :: !IntervalSet
-          , receiveIntervals :: !IntervalSet
+    DVars { sendIntervals :: !Intervals
+          , receiveIntervals :: !Intervals
           , time :: !UTCTime
           , senderHistoryMap :: !(Map SenderId (History ReceiverId))
           , receiverHistoryMap :: !(Map ReceiverId (History SenderId))
           } deriving (Eq, Show)
 
-empty :: IntervalSet -> IntervalSet -> UTCTime -> DVars
+empty :: Intervals -> Intervals -> UTCTime -> DVars
 empty sint rint t0 = DVars sint rint t0 Map.empty Map.empty
           
 advanceTo :: UTCTime -> DVars -> DVars

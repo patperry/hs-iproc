@@ -28,8 +28,8 @@ import qualified DVars as DVars
 import History( History )
 import qualified History as History
 
-import IntervalSet(IntervalSet, IntervalId )
-import qualified IntervalSet as IntervalSet
+import Intervals(Intervals, IntervalId )
+import qualified Intervals as Intervals
 
 import Message
 
@@ -72,29 +72,29 @@ instance Arbitrary IntervalList where
         ts <- arbitrary
         return $ IntervalList $ nub $ sort $ filter (> 0) ts
 
-instance Arbitrary IntervalSet where
+instance Arbitrary Intervals where
     arbitrary = do
         (IntervalList ts) <- arbitrary
-        return $ IntervalSet.fromList ts
+        return $ Intervals.fromList ts
 
-newtype EmptyIntervalSet = EmptyIntervalSet IntervalSet deriving (Eq,Show)
-instance Arbitrary EmptyIntervalSet where
-    arbitrary = return $ EmptyIntervalSet $ IntervalSet.fromList []
+newtype EmptyIntervals = EmptyIntervals Intervals deriving (Eq,Show)
+instance Arbitrary EmptyIntervals where
+    arbitrary = return $ EmptyIntervals $ Intervals.fromList []
 
-newtype NonEmptyIntervalSet = NonEmptyIntervalSet IntervalSet deriving (Eq,Show)
-instance Arbitrary NonEmptyIntervalSet where
+newtype NonEmptyIntervals = NonEmptyIntervals Intervals deriving (Eq,Show)
+instance Arbitrary NonEmptyIntervals where
     arbitrary = do
         t <- arbitrary
         (IntervalList ts) <- arbitrary
-        return $ NonEmptyIntervalSet $
-            IntervalSet.fromList $ nub $ sort $ (abs t + 1):ts
+        return $ NonEmptyIntervals $
+            Intervals.fromList $ nub $ sort $ (abs t + 1):ts
 
 instance Arbitrary UTCTime where
     arbitrary = do
         n <- arbitrary :: Gen Int
         return $ posixSecondsToUTCTime $ fromIntegral n
 
-data EmptyHistory = EmptyHistory IntervalSet UTCTime
+data EmptyHistory = EmptyHistory Intervals UTCTime
     deriving (Eq, Show)
 
 instance Arbitrary EmptyHistory where
@@ -140,7 +140,7 @@ instance Arbitrary SVars where
 
 
 dvars :: [SenderId] -> [ReceiverId]
-      -> IntervalSet -> IntervalSet
+      -> Intervals -> Intervals
       -> UTCTime
       -> Gen DVars
 dvars is js sint rint t0 = do
@@ -276,74 +276,74 @@ prop_SVars_lookupSender_fromActors ss rs = let
            | (i,s) <- Map.assocs ss ]
 
 
-tests_IntervalSet = testGroup "IntervalSet"
-    [ testProperty "size . fromList" prop_IntervalSet_size_fromList
-    , testProperty "at . fromList" prop_IntervalSet_at_fromList
-    , testProperty "assocs . fromList" prop_IntervalSet_assocs_fromList     
-    , testProperty "toList . fromList" prop_IntervalSet_toList_fromList 
-    , testProperty "fromList . toList" prop_IntervalSet_fromList_toList
-    , testProperty "lookup (empty)" prop_IntervalSet_lookup_empty
-    , testProperty "lookup (nonpositive)" prop_IntervalSet_lookup_nonpos
-    , testProperty "lookup (endpoint)" prop_IntervalSet_lookup_endpoint
-    , testProperty "lookup (before endpoint)" prop_IntervalSet_lookup_before_endpoint    
-    , testProperty "lookup (after endpoint)" prop_IntervalSet_lookup_after_endpoint        
-    , testProperty "lookkup (beyond last)" prop_IntervalSet_lookup_beyond_last
+tests_Intervals = testGroup "Intervals"
+    [ testProperty "size . fromList" prop_Intervals_size_fromList
+    , testProperty "at . fromList" prop_Intervals_at_fromList
+    , testProperty "assocs . fromList" prop_Intervals_assocs_fromList     
+    , testProperty "toList . fromList" prop_Intervals_toList_fromList 
+    , testProperty "fromList . toList" prop_Intervals_fromList_toList
+    , testProperty "lookup (empty)" prop_Intervals_lookup_empty
+    , testProperty "lookup (nonpositive)" prop_Intervals_lookup_nonpos
+    , testProperty "lookup (endpoint)" prop_Intervals_lookup_endpoint
+    , testProperty "lookup (before endpoint)" prop_Intervals_lookup_before_endpoint    
+    , testProperty "lookup (after endpoint)" prop_Intervals_lookup_after_endpoint        
+    , testProperty "lookkup (beyond last)" prop_Intervals_lookup_beyond_last
     ]
 
-prop_IntervalSet_size_fromList (IntervalList ts) =
-    (IntervalSet.size . IntervalSet.fromList) ts == length ts
+prop_Intervals_size_fromList (IntervalList ts) =
+    (Intervals.size . Intervals.fromList) ts == length ts
     
-prop_IntervalSet_at_fromList (IntervalList ts) = let
-    iset = IntervalSet.fromList ts
-    in and [ IntervalSet.at i iset == t | (i,t) <- zip [ 0.. ] ts ]
+prop_Intervals_at_fromList (IntervalList ts) = let
+    iset = Intervals.fromList ts
+    in and [ Intervals.at i iset == t | (i,t) <- zip [ 0.. ] ts ]
 
-prop_IntervalSet_assocs_fromList (IntervalList ts) =
-    (IntervalSet.assocs . IntervalSet.fromList) ts == zip [ 0.. ] ts
+prop_Intervals_assocs_fromList (IntervalList ts) =
+    (Intervals.assocs . Intervals.fromList) ts == zip [ 0.. ] ts
 
-prop_IntervalSet_toList_fromList (IntervalList ts) =
-    (IntervalSet.toList . IntervalSet.fromList) ts == ts
+prop_Intervals_toList_fromList (IntervalList ts) =
+    (Intervals.toList . Intervals.fromList) ts == ts
     
-prop_IntervalSet_fromList_toList iset =
-    (IntervalSet.fromList . IntervalSet.toList) iset == iset
+prop_Intervals_fromList_toList iset =
+    (Intervals.fromList . Intervals.toList) iset == iset
     
-prop_IntervalSet_lookup_empty t (EmptyIntervalSet iset) =
-    IntervalSet.lookup t iset == Nothing
+prop_Intervals_lookup_empty t (EmptyIntervals iset) =
+    Intervals.lookup t iset == Nothing
 
-prop_IntervalSet_lookup_nonpos t iset =
-    IntervalSet.lookup (negate $ abs t) iset == Nothing
+prop_Intervals_lookup_nonpos t iset =
+    Intervals.lookup (negate $ abs t) iset == Nothing
     
-prop_IntervalSet_lookup_endpoint (NonEmptyIntervalSet iset) =
+prop_Intervals_lookup_endpoint (NonEmptyIntervals iset) =
     forAll (choose (0,n-1)) $ \i -> let
-        t = IntervalSet.at i iset
-        in IntervalSet.lookup t iset == Just i
+        t = Intervals.at i iset
+        in Intervals.lookup t iset == Just i
   where
-    n = IntervalSet.size iset
+    n = Intervals.size iset
 
-prop_IntervalSet_lookup_before_endpoint (NonEmptyIntervalSet iset) =
+prop_Intervals_lookup_before_endpoint (NonEmptyIntervals iset) =
     forAll (choose (0,n-1)) $ \i -> let
-        t_begin = if i == 0 then 0 else IntervalSet.at (i-1) iset
-        t_end = IntervalSet.at i iset
+        t_begin = if i == 0 then 0 else Intervals.at (i-1) iset
+        t_end = Intervals.at i iset
         t = pred t_end
-        in IntervalSet.lookup t iset ==
+        in Intervals.lookup t iset ==
             if t == 0 then Nothing
                       else if t == t_begin then Just (i-1)
                                            else Just i
   where
-    n = IntervalSet.size iset
+    n = Intervals.size iset
 
-prop_IntervalSet_lookup_after_endpoint (NonEmptyIntervalSet iset) =
+prop_Intervals_lookup_after_endpoint (NonEmptyIntervals iset) =
     forAll (choose (0,n-1)) $ \i -> let
-        t_begin = if i == 0 then 0 else IntervalSet.at (i-1) iset
+        t_begin = if i == 0 then 0 else Intervals.at (i-1) iset
         t = succ t_begin
-        in IntervalSet.lookup t iset == Just i
+        in Intervals.lookup t iset == Just i
   where
-    n = IntervalSet.size iset
+    n = Intervals.size iset
 
-prop_IntervalSet_lookup_beyond_last (NonEmptyIntervalSet iset) =
-    IntervalSet.lookup (succ tlast) iset == Nothing
+prop_Intervals_lookup_beyond_last (NonEmptyIntervals iset) =
+    Intervals.lookup (succ tlast) iset == Nothing
   where
-    n = IntervalSet.size iset
-    tlast = IntervalSet.at (n - 1) iset
+    n = Intervals.size iset
+    tlast = Intervals.at (n - 1) iset
 
 
 tests_History = testGroup "History"
@@ -355,10 +355,10 @@ tests_History = testGroup "History"
     
 prop_History_pastEvents h =
     History.pastEvents h
-        == map (\(e,dt) -> (e, fromJust $ IntervalSet.lookup dt iset))
+        == map (\(e,dt) -> (e, fromJust $ Intervals.lookup dt is))
                (History.pastEventsWithTimes h)
   where
-    iset = History.intervalSet h
+    is = History.intervals h
     _ = h :: History Int
     
 prop_History_currentEvents_insert h e =
@@ -372,21 +372,21 @@ prop_History_pastEvents_advanceBy h (NonNegative dt) =
     sort ((History.pastEvents . History.advanceBy dt) h)
         == 
             (sort . nubBy ((==) `on` fst))
-                 (mapMaybe (\e -> (e,) `fmap` IntervalSet.lookup dt iset)
+                 (mapMaybe (\e -> (e,) `fmap` Intervals.lookup dt is)
                            (History.currentEvents h)
                   ++
-                  mapMaybe (\(e,t) -> ((e,) `fmap` IntervalSet.lookup (t+dt) iset))
+                  mapMaybe (\(e,t) -> ((e,) `fmap` Intervals.lookup (t+dt) is))
                            (History.pastEventsWithTimes h)
                  )
   where
-    iset = History.intervalSet h
+    is = History.intervals h
     _ = h :: History Int
     
 prop_History_lookup_advanceBy_insert h e (NonNegative dt) =
     (History.lookup e
      . History.advanceBy dt'
      . History.insert e) h
-        == IntervalSet.lookup dt' (History.intervalSet h)
+        == Intervals.lookup dt' (History.intervals h)
   where
     dt' = succ dt
     _ = e :: Int
@@ -475,7 +475,7 @@ prop_Summary_fromList (MessagesWithVars s d tms) =
     
 main :: IO ()
 main = defaultMain [ tests_SVars
-                   , tests_IntervalSet
+                   , tests_Intervals
                    , tests_History
                    , tests_DVars
                    , tests_Summary

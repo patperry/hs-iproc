@@ -13,8 +13,8 @@ import Numeric.LinearAlgebra
        
         
 import Actor
-import IntervalSet( IntervalSet )
-import qualified IntervalSet as IntervalSet
+import Intervals( Intervals )
+import qualified Intervals as Intervals
 import qualified DVars as DVars
 import qualified SVars as SVars
 import Params( defaultParams )
@@ -35,13 +35,13 @@ fromEmployee (Employee eid _ _ _ g s d) =
     in (eid, Actor $ listVector 12
         [ 1, f, j, l, t, f*j, f*l, f*t, j*l, j*t, f*j*l, f*j*t ])
 
-sendIntervals :: IntervalSet
-sendIntervals = IntervalSet.fromList $
+sendIntervals :: Intervals
+sendIntervals = Intervals.fromList $
     map (realToFrac . (3600*) . (2^^)) $    
         [ -7..2 ] ++ [ 4..13 ]
 
-recvIntervals :: IntervalSet
-recvIntervals = IntervalSet.fromList $
+recvIntervals :: Intervals
+recvIntervals = Intervals.fromList $
     map (realToFrac . (3600*) . (2^^)) $
         [ -7..11 ]
         

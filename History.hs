@@ -1,5 +1,5 @@
 module History (
-    History( intervalSet, time ),
+    History( intervals, time ),
     empty,
     insert,
     lookup,
@@ -22,20 +22,20 @@ import Data.Set( Set )
 import qualified Data.Set as Set
 import Data.Time
 
-import IntervalSet( IntervalSet, IntervalId )
-import qualified IntervalSet as IntervalSet
+import Intervals( Intervals, IntervalId )
+import qualified Intervals as Intervals
 
 
 data EventDiffTime = EventDiffTime !IntervalId !NominalDiffTime deriving (Eq, Show)
 
 data History e = 
-    History { intervalSet :: !IntervalSet
+    History { intervals :: !Intervals
             , time :: !UTCTime
             , pastEventMap :: !(Map e EventDiffTime)
             , currentEventSet :: !(Set e)
             } deriving (Eq, Show)
 
-empty :: IntervalSet -> UTCTime -> History e
+empty :: Intervals -> UTCTime -> History e
 empty iset t0 = History iset t0 Map.empty Set.empty
 
 insert :: (Ord e) => e -> History e -> History e
@@ -66,14 +66,14 @@ advanceTo t h@(History iset t0 past cur) | t == t0 = h
                                          | t < t0 = error "negative time difference"
                                          | otherwise = let
     dt = t `diffUTCTime` t0
-    iset_assocs = IntervalSet.assocs iset
+    iset_assocs = Intervals.assocs iset
     past' = flip Map.mapMaybe past $ \(EventDiffTime i d) ->
                 let d'  = d + dt
                     id' = listToMaybe [ EventDiffTime int_id d'
                                       | (int_id, int) <- drop i iset_assocs
                                       , d' <= int ]
                 in id'
-    past'' = case IntervalSet.lookup dt iset of
+    past'' = case Intervals.lookup dt iset of
                  Nothing -> past'
                  Just i0 ->
                     Set.fold (\e -> Map.insert e $ EventDiffTime i0 dt)

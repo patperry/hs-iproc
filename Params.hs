@@ -8,7 +8,7 @@ module Params (
 import Numeric.LinearAlgebra
 
 import Actor( SenderId, ReceiverId )
-import qualified IntervalSet as IntervalSet
+import qualified Intervals as Intervals
 import SVars( SVars )
 import qualified SVars as SVars
 import DVars( DVars )
@@ -29,8 +29,8 @@ defaultParams :: SVars -> DVars -> Params
 defaultParams sv dv =
     Params sv
            (constantVector (SVars.dim sv) 0)
-           (constantVector (IntervalSet.size $ DVars.sendIntervals dv) 0)
-           (constantVector (IntervalSet.size $ DVars.receiveIntervals dv) 0)
+           (constantVector (Intervals.size $ DVars.sendIntervals dv) 0)
+           (constantVector (Intervals.size $ DVars.receiveIntervals dv) 0)
            False
 
 validDyad :: (SenderId, ReceiverId) -> Params -> Bool

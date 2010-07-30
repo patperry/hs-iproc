@@ -14,7 +14,7 @@ import qualified Data.Map as Map
 import Numeric.LinearAlgebra
 
 import Actor
-import IntervalSet( IntervalId )
+import Intervals( IntervalId )
 import DVars( DVars )
 import qualified DVars as DVars
 import SVars( SVars )
