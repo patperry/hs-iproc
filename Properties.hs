@@ -4,7 +4,7 @@ module Main
 
 import Control.Arrow( second )
 import Control.Monad( replicateM )
-import Data.AEq( (~==) )
+import Data.AEq( AEq(..) )
 import Data.Time
 import Data.Time.Clock.POSIX( posixSecondsToUTCTime )
 import Data.Function( on )
@@ -49,6 +49,10 @@ import qualified Summary as Summary
 
 import SVars( SVars )
 import qualified SVars as SVars
+
+instance AEq DVar where
+    (~==) = (==)
+    (===) = (==)
 
 actor :: Int -> Gen Actor
 actor p = do
@@ -550,7 +554,10 @@ tests_Model = testGroup "Model"
     , testProperty "probParts (static)" prop_Model_prob_parts_static
     , testProperty "probParts" prop_Model_prob_parts    
     , testProperty "exptectedSVars (static)" prop_Model_expectedSVars_static
-    , testProperty "exptectedSVars" prop_Model_expectedSVars    
+    , testProperty "exptectedSVars" prop_Model_expectedSVars
+    , testProperty "expectedDVars (static)" prop_Model_expectedDVars_static
+    , testProperty "expectedDVars" prop_Model_expectedDVars
+    , testProperty "expectedDVarsByReceiver" prop_Model_expectedDVarsByReceiver
     ]
     
 prop_Model_receivers (SenderModelWithContext c sm) =
@@ -625,16 +632,40 @@ prop_Model_expectedSVars_static (SenderModelWithContext _ sm) =
 prop_Model_expectedSVars (SenderModelWithContext c sm) =
     Model.expectedSVars rm
         ~==
-        foldl' (flip $ \(r,w) ->
-                    addVectorWithScale w (SVars.lookupDyad s r sv) 1)
-               (constantVector (SVars.dim sv) 0)
-               (Model.probs rm)
+        Params.expectedSVars c s p
   where
     s = Model.sender sm
     rm = Model.receiverModel c sm
     p = Model.params sm
     sv = Params.svars p
 
+prop_Model_expectedDVars_static (SenderModelWithContext _ sm) =
+    Model.expectedDVars rm == []
+  where
+    s = Model.sender sm
+    rm = Model.staticReceiverModel sm
+
+prop_Model_expectedDVars (SenderModelWithContext c sm) =
+    (sort . filter ((/= 0) . snd)) (Model.expectedDVars rm)
+        ~==
+        (sort . filter ((/= 0) . snd)) (Params.expectedDVars c s p)
+  where
+    s = Model.sender sm
+    rm = Model.receiverModel c sm
+    p = Model.params sm
+    dv = Params.dvars p
+
+prop_Model_expectedDVarsByReceiver (SenderModelWithContext c sm) =
+    flip all (Model.expectedDVarsByReceiver rm) $ \(r, (vs,w)) ->
+        sort vs ~== sort (DVars.lookupDyad c s r dv)
+        &&
+        w ~== Params.prob c s r p
+  where
+    s = Model.sender sm
+    rm = Model.receiverModel c sm
+    p = Model.params sm
+    dv = Params.dvars p
+    
     
 main :: IO ()
 main = defaultMain [ tests_SVars

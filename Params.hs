@@ -17,6 +17,10 @@ module Params (
     
     prob,
     staticProb,
+    probs,
+    
+    expectedSVars,
+    expectedDVars,
     ) where
         
 import Data.List( foldl' )
@@ -50,6 +54,19 @@ defaultParams sv dv =
            (constantVector (Intervals.size $ DVars.sendIntervals dv) 0)
            (constantVector (Intervals.size $ DVars.receiveIntervals dv) 0)
            False
+
+validDyad :: SenderId -> ReceiverId ->  Params -> Bool
+validDyad s r p | hasSelfLoops p = True
+                | otherwise      = s /= r
+
+senders :: Params -> [SenderId]
+senders p = Map.keys $ SVars.senders $ svars p
+
+receivers :: SenderId -> Params -> [ReceiverId]
+receivers s p = 
+    filter (\r -> validDyad s r p) $
+        Map.keys $ SVars.receivers $ svars p
+
 
 logWeight :: Context -> SenderId -> ReceiverId -> Params -> Double
 logWeight c s r p =
@@ -94,14 +111,25 @@ prob c s r p = weight c s r p / sumWeights c s p
 staticProb :: SenderId -> ReceiverId -> Params -> Double
 staticProb s r p = staticWeight s r p / staticSumWeights s p
 
-validDyad :: SenderId -> ReceiverId ->  Params -> Bool
-validDyad s r p | hasSelfLoops p = True
-                | otherwise      = s /= r
+probs :: Context -> SenderId -> Params -> [(ReceiverId, Double)]
+probs c s p = [ (r, prob c s r p) | r <- receivers s p ]
 
-senders :: Params -> [SenderId]
-senders p = Map.keys $ SVars.senders $ svars p
+expectedSVars :: Context -> SenderId -> Params -> Vector Double
+expectedSVars c s p =
+    foldl' (flip $ \(r,w) ->
+                addVectorWithScale w (SVars.lookupDyad s r sv) 1)
+           (constantVector (SVars.dim sv) 0)
+           (probs c s p)
+  where
+    sv = svars p
 
-receivers :: SenderId -> Params -> [ReceiverId]
-receivers s p = 
-    filter (\r -> validDyad s r p) $
-        Map.keys $ SVars.receivers $ svars p
+expectedDVars :: Context -> SenderId -> Params -> [(DVar, Double)]
+expectedDVars c s p = Map.assocs $
+    foldl' (\m (r,w) ->
+        foldl' (flip $ \v -> Map.insertWith' (+) v w)
+               m
+               (DVars.lookupDyad c s r dv))
+        Map.empty
+        (probs c s p)
+  where
+    dv = dvars p
