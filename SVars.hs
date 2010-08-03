@@ -47,7 +47,7 @@ lookupSender :: SenderId -> SVars -> [(ReceiverId, Vector Double)]
 lookupSender s (SVars _ m _ _) = Map.assocs $
     Map.findWithDefault (error "unknown sender") s m
 
-lookupDyad :: (SenderId, ReceiverId) -> SVars -> Vector Double
-lookupDyad (s,r) (SVars _ m _ _) = 
+lookupDyad :: SenderId -> ReceiverId -> SVars -> Vector Double
+lookupDyad s r (SVars _ m _ _) = 
     Map.findWithDefault (error "unknown receiver") r $
          Map.findWithDefault (error "unknown sender") s m

@@ -64,8 +64,8 @@ lookupSender c s _ =
   where
     singleton a = [a]
 
-lookupDyad :: Context -> (SenderId, ReceiverId) -> DVars -> [DVar]
-lookupDyad c (s,r) _ =
+lookupDyad :: Context -> SenderId -> ReceiverId -> DVars -> [DVar]
+lookupDyad c s r _ =
     concatMap maybeToList
         [ fmap Send $ History.lookup r $ Context.senderHistory s c
         , fmap Receive $ History.lookup r $ Context.receiverHistory s c

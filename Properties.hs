@@ -4,6 +4,7 @@ module Main
 
 import Control.Arrow( second )
 import Control.Monad( replicateM )
+import Data.AEq( (~==) )
 import Data.Time
 import Data.Time.Clock.POSIX( posixSecondsToUTCTime )
 import Data.Function( on )
@@ -37,6 +38,12 @@ import qualified Intervals as Intervals
 
 import Message
 
+import Model( SenderModel, ReceiverModel )
+import qualified Model as Model
+
+import Params( Params )
+import qualified Params as Params
+
 import Summary( Summary )
 import qualified Summary as Summary
 
@@ -45,7 +52,7 @@ import qualified SVars as SVars
 
 actor :: Int -> Gen Actor
 actor p = do
-    x <- Test.vector p
+    x <- listVector p `fmap` replicateM p (choose (-1,1))
     return $ Actor x
 
 instance Arbitrary Actor where
@@ -236,8 +243,50 @@ instance Arbitrary MessageWithVars where
         m <- message ss rs
         return $ MessageWithVars sv dv c m
 
-    
-    
+
+params :: SVars -> DVars -> Gen Params
+params sv dv = let
+    p0 = SVars.dim sv
+    ps = Intervals.size $ DVars.sendIntervals dv
+    pr = Intervals.size $ DVars.receiveIntervals dv
+    in do
+        c0 <- listVector p0 `fmap` replicateM p0 (choose (-5,5))
+        cs <- listVector ps `fmap` replicateM ps (choose (-5,5))
+        cr <- listVector pr `fmap` replicateM pr (choose (-5,5))
+        l <- arbitrary
+        return $ (Params.defaultParams sv dv)
+                     { Params.staticCoefs = c0
+                     , Params.sendCoefs = cs
+                     , Params.receiveCoefs = cr
+                     , Params.hasSelfLoops = l
+                     }
+
+data ParamsWithVars =
+    ParamsWithVars SVars DVars Context Params deriving (Show)
+instance Arbitrary ParamsWithVars where
+    arbitrary = do
+        (MessageWithVars sv dv c _) <- arbitrary
+        p <- params sv dv
+        return $ ParamsWithVars sv dv c p
+
+data SenderModelWithContext =
+    SenderModelWithContext Context SenderModel deriving (Show)
+instance Arbitrary SenderModelWithContext where
+    arbitrary = do
+        (ActorIdList ss) <- arbitrary
+        s <- elements ss
+        (ActorIdList rs0) <- arbitrary -- make sure there is a non-loop
+        let rs = nub $ (s+1):rs0
+        
+        t0 <- arbitrary
+        sv <- svars ss rs
+        dv <- arbitrary
+        c <- context ss rs t0 dv
+        p <- params sv dv
+        return $ SenderModelWithContext c $ Model.senderModel p s
+
+
+
 tests_SVars = testGroup "SVars"
     [ testProperty "interactions" prop_SVars_interactions
     , testProperty "dim . fromActors" prop_SVars_dim_fromActors
@@ -271,7 +320,7 @@ prop_SVars_receivers_fromActors ss rs =
 
 prop_SVars_lookupDyad_fromActors ss rs = let
     sv = SVars.fromActors ss rs
-    in and [ SVars.lookupDyad (i,j) sv
+    in and [ SVars.lookupDyad i j sv
                 == SVars.interactions s r
            | (i,s) <- Map.assocs ss, (j,r) <- Map.assocs rs ]
     
@@ -398,9 +447,9 @@ prop_History_lookup_advanceBy_insert h e (NonNegative dt) =
     _ = e :: Int
 
 tests_Context = testGroup "Context"
-        [ testProperty "senderHistory" prop_Context_senderHistory
-        , testProperty "receiverHistory" prop_Context_receiverHistory
-        ]
+    [ testProperty "senderHistory" prop_Context_senderHistory
+    , testProperty "receiverHistory" prop_Context_receiverHistory
+    ]
 
 prop_Context_senderHistory (MessageWithContext c m) (NonNegative dt) =
         (History.advanceBy dt
@@ -436,15 +485,15 @@ prop_DVars_lookupSender (DVarsWithContext c dv) =
     flip all (Context.senders c) $ \s -> let
         rds = DVars.lookupSender c s dv
         in map (second sort) rds
-               == [ (r, sort $ DVars.lookupDyad c (s,r) dv)
+               == [ (r, sort $ DVars.lookupDyad c s r dv)
                   | (r,_) <- rds ]
 
 prop_DVars_lookupDyad_dual (ActorIdList ss) (ActorIdList rs) t0 int =
     forAll (context ss rs t0 dv) $ \c ->
         flip all (Context.senders c) $ \s ->
         flip all (Context.receivers c) $ \r ->
-            (dual . sort) (DVars.lookupDyad c (s,r) dv)
-                == sort (DVars.lookupDyad c (r,s) dv)
+            (dual . sort) (DVars.lookupDyad c s r dv)
+                == sort (DVars.lookupDyad c r s dv)
   where
     dv = DVars.fromIntervals int int
 
@@ -455,9 +504,9 @@ prop_DVars_lookupDyad_dual (ActorIdList ss) (ActorIdList rs) t0 int =
 
 
 tests_Summary = testGroup "Summary"
-        [ testProperty "singleton" prop_Summary_singleton
-        , testProperty "fromList" prop_Summary_fromList
-        ]
+    [ testProperty "singleton" prop_Summary_singleton
+    , testProperty "fromList" prop_Summary_fromList
+    ]
 
 prop_Summary_singleton (MessageWithVars s d c m) = and
     [ Summary.messageCount smry == 1
@@ -465,16 +514,16 @@ prop_Summary_singleton (MessageWithVars s d c m) = and
     , Summary.sendCount smry == Map.singleton f (length ts)
     , Summary.receiveCount smry == Map.fromList (zip ts (repeat 1))
     , Summary.svarsSum smry
-        == foldl1' addVector [ SVars.lookupDyad (f,t) s | t <- ts ]
+        == foldl1' addVector [ SVars.lookupDyad f t s | t <- ts ]
     , Summary.dvarsSendSum smry
         == (foldl' (flip $ \i -> Map.insertWith' (+) i 1)
                   Map.empty $ concat $
-                  [ mapMaybe DVars.send $ DVars.lookupDyad c (f,t) d
+                  [ mapMaybe DVars.send $ DVars.lookupDyad c f t d
                   | t <- ts ])
     , Summary.dvarsReceiveSum smry
         == (foldl' (flip $ \i -> Map.insertWith' (+) i 1)
                   Map.empty $ concat $
-                  [ mapMaybe DVars.receive $ DVars.lookupDyad c (f,t) d
+                  [ mapMaybe DVars.receive $ DVars.lookupDyad c f t d
                   | t <- ts ])
     ]
   where
@@ -490,6 +539,102 @@ prop_Summary_fromList (MessagesWithVars s d c tms) =
   where
     (_,cms) = Context.accum c tms
 
+
+tests_Model = testGroup "Model"
+    [ testProperty "receivers (static)" prop_Model_receivers_static
+    , testProperty "receivers" prop_Model_receivers
+    , testProperty "sum . probs (static)" prop_Model_sum_probs_static
+    , testProperty "sum . probs" prop_Model_sum_probs
+    , testProperty "prob (static)" prop_Model_prob_static
+    , testProperty "prob" prop_Model_prob
+    , testProperty "probParts (static)" prop_Model_prob_parts_static
+    , testProperty "probParts" prop_Model_prob_parts    
+    , testProperty "exptectedSVars (static)" prop_Model_expectedSVars_static
+    , testProperty "exptectedSVars" prop_Model_expectedSVars    
+    ]
+    
+prop_Model_receivers (SenderModelWithContext c sm) =
+    sort (Model.receivers (Model.receiverModel c sm))
+        ==
+        sort (Params.receivers s p)
+  where
+    p = Model.params sm
+    s = Model.sender sm
+
+prop_Model_receivers_static (SenderModelWithContext c sm) =
+    sort (Model.receivers (Model.staticReceiverModel sm))
+        ==
+        sort (Params.receivers s p)
+  where
+    p = Model.params sm
+    s = Model.sender sm
+
+prop_Model_sum_probs_static (SenderModelWithContext _ sm) =
+    sum (snd $ unzip $ Model.probs $ Model.staticReceiverModel sm) ~== 1
+
+prop_Model_prob_static (SenderModelWithContext _ sm) =
+    flip all (Model.probs $ Model.staticReceiverModel sm) $ \(r,prob) ->
+        prob ~== Params.staticProb s r p
+  where
+    s = Model.sender sm
+    p = Model.params sm
+
+prop_Model_sum_probs (SenderModelWithContext c sm) =
+    sum (snd $ unzip $ Model.probs $ Model.receiverModel c sm) ~== 1
+
+prop_Model_prob (SenderModelWithContext c sm) =
+    flip all (Model.probs rm) $ \(r,prob) ->
+        prob ~== Params.prob c s r p
+  where
+    s = Model.sender sm
+    rm = Model.receiverModel c sm
+    p = Model.params sm
+
+prop_Model_prob_parts_static (SenderModelWithContext _ sm) =
+    flip all (Model.receivers rm) $ \r -> let
+        (w0,d) = Model.probParts rm r
+        in w0 == 1 && d == 0
+  where
+    s = Model.sender sm
+    rm = Model.staticReceiverModel sm
+    p = Model.params sm        
+
+prop_Model_prob_parts (SenderModelWithContext c sm) =
+    flip all (Model.receivers rm) $ \r -> let
+        (w0,d) = Model.probParts rm r
+        in w0 * Params.staticProb s r p + d
+               ~== Params.prob c s r p
+  where
+    s = Model.sender sm
+    rm = Model.receiverModel c sm
+    p = Model.params sm        
+
+prop_Model_expectedSVars_static (SenderModelWithContext _ sm) =
+    Model.expectedSVars rm
+        ~==
+        foldl' (flip $ \(r,w) ->
+                    addVectorWithScale w (SVars.lookupDyad s r sv) 1)
+               (constantVector (SVars.dim sv) 0)
+               (Model.probs rm)
+  where
+    s = Model.sender sm
+    rm = Model.staticReceiverModel sm
+    p = Model.params sm
+    sv = Params.svars p
+
+prop_Model_expectedSVars (SenderModelWithContext c sm) =
+    Model.expectedSVars rm
+        ~==
+        foldl' (flip $ \(r,w) ->
+                    addVectorWithScale w (SVars.lookupDyad s r sv) 1)
+               (constantVector (SVars.dim sv) 0)
+               (Model.probs rm)
+  where
+    s = Model.sender sm
+    rm = Model.receiverModel c sm
+    p = Model.params sm
+    sv = Params.svars p
+
     
 main :: IO ()
 main = defaultMain [ tests_SVars
@@ -498,4 +643,5 @@ main = defaultMain [ tests_SVars
                    , tests_Context
                    , tests_DVars
                    , tests_Summary
+                   , tests_Model
                    ]

@@ -15,6 +15,7 @@ module Model (
     prob,
     probs,
     probParts,
+    probsParts,
     
     expectedSVars,
     expectedDVars,
@@ -25,6 +26,7 @@ module Model (
 import Data.List( foldl' )
 import Data.Map( Map )
 import qualified Data.Map as Map
+import Data.Maybe( fromMaybe )
 
 import Numeric.LinearAlgebra
 
@@ -74,14 +76,23 @@ prob (ReceiverModel sw dw) r =
     case Map.lookup r (dynamicWeightMap dw) of
         Just (DynamicWeight _ p _) -> p
         Nothing -> case Map.lookup r (staticWeightMap sw) of
-            Just (StaticWeight _ _ _ p) -> p
+            Just (StaticWeight _ _ _ p) -> 
+                ( p
+                / (1 + dynamicDiffWeightSum dw / staticWeightSum sw)
+                )
             Nothing -> 0
 
 probs :: ReceiverModel -> [(ReceiverId, Double)]
 probs rm = [ (r, prob rm r) | r <- receivers rm ]
 
-probParts :: ReceiverModel -> (Double, [(ReceiverId, Double)])
-probParts (ReceiverModel sw dw) =
+probParts :: ReceiverModel -> ReceiverId -> (Double, Double)
+probParts rm r = let
+    (w0, rds) = probsParts rm
+    d = fromMaybe 0 $ lookup r rds
+    in (w0,d)
+
+probsParts :: ReceiverModel -> (Double, [(ReceiverId, Double)])
+probsParts (ReceiverModel sw dw) =
     ( 1 / (1 + dynamicDiffWeightSum dw / staticWeightSum sw)
     , [(r,d) | (r, DynamicWeight _ _ d) <- Map.assocs (dynamicWeightMap dw) ]
     )
@@ -90,10 +101,11 @@ expectedSVars :: ReceiverModel -> Vector Double
 expectedSVars (ReceiverModel sw dw) =
     foldl' (flip $ \(x,p) -> addVectorWithScale p x 1) zero xps
   where
+    invscale = 1 + dynamicDiffWeightSum dw / staticWeightSum sw
     xps =
         [ (x, case Map.lookup r (dynamicWeightMap dw) of
                   Just (DynamicWeight _ p' _) -> p'
-                  Nothing -> p
+                  Nothing -> p / invscale
           )
         | (r, StaticWeight x _ _ p) <- Map.assocs (staticWeightMap sw)
         ]
@@ -143,7 +155,7 @@ senderModel p s = let
   where
     sv = Params.svars p
     coefs = Params.staticCoefs p
-    validReceiver r = Params.validDyad (s,r) p
+    validReceiver r = Params.validDyad s r p
     
     weight x = let
         lw = coefs `dotVector` x
@@ -159,7 +171,8 @@ receiverModel :: Context -> SenderModel -> ReceiverModel
 receiverModel c (SenderModel p s sw) = let
     rws = flip map (DVars.lookupSender c s dv) $ \(r,vs) -> let
         (StaticWeight _ w0 lw0 p0) =
-            Map.findWithDefault (error "unknown or invalid receiver") r
+            Map.findWithDefault (StaticWeight (constantVector 0 0) 0 (-1/0) 0)
+                                r
                                 (staticWeightMap sw)
         lw = lw0 + logWeight vs
         w = exp lw
@@ -168,9 +181,11 @@ receiverModel c (SenderModel p s sw) = let
     
     diff_sum = foldl' (+) 0 [ dw | (_,(_,_,dw,_)) <- rws ]
     w_sum = staticWeightSum sw + diff_sum
+    invscale = 1 + diff_sum / staticWeightSum sw
     
     wm = Map.fromList
-             [ let (p, dp) = (w/w_sum, p-p0) 
+             [ let p  = w / w_sum
+                   dp = p - p0 / invscale
                    dw = DynamicWeight vs p dp
                in dw `seq` (r,dw)
              | (r, (vs,w,_,p0)) <- rws
