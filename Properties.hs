@@ -557,7 +557,6 @@ tests_Model = testGroup "Model"
     , testProperty "exptectedSVars" prop_Model_expectedSVars
     , testProperty "expectedDVars (static)" prop_Model_expectedDVars_static
     , testProperty "expectedDVars" prop_Model_expectedDVars
-    , testProperty "expectedDVarsByReceiver" prop_Model_expectedDVarsByReceiver
     ]
     
 prop_Model_receivers (SenderModelWithContext c sm) =
@@ -655,17 +654,6 @@ prop_Model_expectedDVars (SenderModelWithContext c sm) =
     p = Model.params sm
     dv = Params.dvars p
 
-prop_Model_expectedDVarsByReceiver (SenderModelWithContext c sm) =
-    flip all (Model.expectedDVarsByReceiver rm) $ \(r, (vs,w)) ->
-        sort vs ~== sort (DVars.lookupDyad c s r dv)
-        &&
-        w ~== Params.prob c s r p
-  where
-    s = Model.sender sm
-    rm = Model.receiverModel c sm
-    p = Model.params sm
-    dv = Params.dvars p
-    
     
 main :: IO ()
 main = defaultMain [ tests_SVars

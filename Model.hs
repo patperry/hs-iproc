@@ -9,8 +9,10 @@ module Model (
     receiverModel,
     staticReceiverModel,
 
-    staticPart,
     receivers,
+    staticPart,
+    DynamicWeight(..),
+    dynamicPart,
     
     prob,
     probs,
@@ -19,8 +21,6 @@ module Model (
     
     expectedSVars,
     expectedDVars,
-    expectedDVarsByReceiver,
-
     ) where
 
 import Data.List( foldl' )
@@ -118,15 +118,12 @@ expectedDVars (ReceiverModel _ dw) = Map.assocs $
                | (DynamicWeight vs p _) <- Map.elems (dynamicWeightMap dw)
                ]
 
-expectedDVarsByReceiver :: ReceiverModel -> [(ReceiverId, ([DVar], Double))]
-expectedDVarsByReceiver (ReceiverModel _ dw) =
-    [ (r, (vs, p))
-    | (r, DynamicWeight vs p _) <- Map.assocs (dynamicWeightMap dw)
-    ]
-
 staticPart :: ReceiverModel -> ReceiverModel
 staticPart (ReceiverModel sw _) =
     (ReceiverModel sw (DynamicWeights Map.empty 0))
+
+dynamicPart :: ReceiverModel -> [(ReceiverId, DynamicWeight)]
+dynamicPart (ReceiverModel _ dw) = Map.assocs $ dynamicWeightMap dw
 
 data SenderModel = 
     SenderModel { params :: !Params

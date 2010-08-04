@@ -1,7 +1,7 @@
 module Main
     where
 
-import Data.List( foldl' )
+import Data.List( foldl', mapAccumL )
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Database.HDBC
@@ -18,6 +18,7 @@ import qualified DVars as DVars
 import Enron
 import Intervals( Intervals )
 import qualified Intervals as Intervals
+import qualified LogLik as LogLik
 import Message
 import Params( defaultParams )
 import qualified SVars as SVars
@@ -57,12 +58,17 @@ main = do
                          else (fst . head) tms
         c0 = DVars.context t0 dv
         cms = snd $ Context.accum c0 tms
-        smry = Summary.fromList sv dv cms
+        --smry = Summary.fromList sv dv cms
         p = defaultParams sv dv
-        -- dev = foldl' updateDeviance (emptyDeviance sv dv p) $ zip ms hs
+        (ll,rs) = mapAccumL (flip LogLik.insert) (LogLik.empty p) cms
         
-    putStrLn $ "message count: " ++ show (Summary.messageCount smry)
-    putStrLn $ "summary: " ++ show smry
-    -- putStrLn $ "deviance: " ++ show (value dev)
+    -- putStrLn $ "message count: " ++ show (Summary.messageCount smry)
+    -- putStrLn $ "summary: " ++ show smry
+
+    putStrLn $ "Null Deviance: " ++ show (LogLik.nullDeviance ll)
+    putStrLn $ "Null Df: " ++ show (LogLik.nullDf ll)    
+
+    putStrLn $ "Deviance: " ++ show (LogLik.deviance ll)
+    putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)    
     
     disconnect conn
