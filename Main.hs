@@ -71,4 +71,6 @@ main = do
     putStrLn $ "Deviance: " ++ show (LogLik.deviance ll)
     putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)    
     
+    putStrLn $ "Score: \n" ++ show (LogLik.score ll)
+    
     disconnect conn

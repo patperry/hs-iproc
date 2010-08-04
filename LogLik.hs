@@ -8,6 +8,8 @@ module LogLik (
     nullDeviance,
     residDf,
     nullDf,
+    
+    Score(..),
     score,
     fisher,
     
@@ -18,7 +20,7 @@ import Debug.Trace
 import Data.List( foldl', partition )
 import Data.Map( Map )
 import qualified Data.Map as Map
-import Data.Maybe( catMaybes )
+import Data.Maybe( catMaybes, fromMaybe )
 
 import Numeric.LinearAlgebra
 
@@ -45,44 +47,33 @@ unionWith' f m m' =
 
 data ReceiverLogLik =
     ReceiverLogLik { dynamicWeightPart :: !Double
-                   , expectedSendIPart :: !(Map IntervalId Double)
-                   , expectedReceiveIPart :: !(Map IntervalId Double)
-                   , expectedSendIReceiveICrossPart ::
-                        !(Map (IntervalId,IntervalId) Double)
+                   , expectedDVarPart :: !(Map DVar Double)
+                   , expectedDVarCrossPart :: !(Map (DVar,DVar) Double)
                    }
     deriving (Eq, Show)
 
 
 emptyRLL :: ReceiverLogLik
 emptyRLL =
-    ReceiverLogLik 0 Map.empty Map.empty Map.empty
+    ReceiverLogLik 0 Map.empty Map.empty
     
 singletonRLL :: Double -> DynamicWeight -> ReceiverLogLik
 singletonRLL l (DynamicWeight vs p dp) = let
     lp = l * p
     ldp = l * dp
-    (ss0,rs0) = partition isSend vs
-    (ss, rs) = (map toIntervalId ss0, map toIntervalId rs0)
     
-    es = Map.fromList $ [ (s,lp) | s <- ss ]
-    er = Map.fromList $ [ (r,lp) | r <- rs ]
-    esr = Map.fromList $ [ ((s,r), lp) | s <- ss, r <- rs ]
+    e = Map.fromListWith (+) $ zip vs (repeat lp)
+    e2 = Map.fromListWith (+) $ [ ((v,v'), lp) | v <- vs, v' <- vs]
     
-    in ReceiverLogLik ldp es er esr
-  where
-    isSend (Send _) = True
-    isSend (Receive _) = False
-    
-    toIntervalId (Send i) = i
-    toIntervalId (Receive i') = i'
+    in ReceiverLogLik ldp e e2
+
 
 unionRLL :: ReceiverLogLik -> ReceiverLogLik -> ReceiverLogLik
-unionRLL (ReceiverLogLik dp1 es1 er1 esr1)
-         (ReceiverLogLik dp2 es2 er2 esr2) =
+unionRLL (ReceiverLogLik dp1 e1 ecross1)
+         (ReceiverLogLik dp2 e2 ecross2) =
     ReceiverLogLik (dp1 + dp2)
-                   (unionWith' (+) es1 es2)
-                   (unionWith' (+) er1 er2)
-                   (unionWith' (+) esr1 esr2)                   
+                   (unionWith' (+) e1 e2)
+                   (unionWith' (+) ecross1 ecross2)
 
 insertRLL :: Double -> DynamicWeight -> ReceiverLogLik -> ReceiverLogLik
 insertRLL l dw rll = unionRLL rll $ singletonRLL l dw
@@ -92,54 +83,44 @@ data SenderLogLik =
                  , value :: !Double
                  , sendCount :: !Int
                  , receiveCount :: !(Map ReceiverId Int)
-                 , observedSendI :: !(Map IntervalId Int)
-                 , observedReceiveI :: !(Map IntervalId Int)
+                 , observedDVars :: !(Map DVar Int)
                  , staticWeightPart :: !Double
                  , receiverLogLik :: !(Map ReceiverId ReceiverLogLik)
                  }
     deriving (Eq, Show)
 
 emptySLL :: SenderModel -> SenderLogLik
-emptySLL m = SenderLogLik m 0 0 Map.empty Map.empty Map.empty 0 Map.empty
+emptySLL m = SenderLogLik m 0 0 Map.empty Map.empty 0 Map.empty
 
 singletonSLL :: SenderModel -> (Context, [ReceiverId]) -> SenderLogLik
 singletonSLL m (c,ts) = let
+    val = foldl' (+) 0 [ log (Model.prob rm t) | t <- ts ]
+    sc = l
+    rc = Map.fromList $ zip ts (repeat 1)
+    obs = Map.fromListWith (+) $ zip vs (repeat 1)
+    swp = l' * (fst $ Model.probsParts rm)
+    rll = Map.fromList [ (r, singletonRLL l' dw)
+                       | (r,dw) <- Model.dynamicPart rm
+                       ]
+
+    in SenderLogLik m val sc rc obs swp rll
+  where
     dv = Params.dvars $ Model.params m
     rm = Model.receiverModel c m
     s = Model.sender m
     l = length ts
     l' = realToFrac l
     vs = concat [ DVars.lookupDyad c s t dv | t <- ts ]
-    (ss0, rs0) = partition isSend vs
-    (ss, rs) = (map toIntervalId ss0, map toIntervalId rs0)
-
-    val = foldl' (+) 0 [ log (Model.prob rm t) | t <- ts ]
-    sc = l
-    rc = Map.fromList $ zip ts (repeat 1)
-    os = Map.fromListWith (+) $ zip ss (repeat 1)
-    or = Map.fromListWith (+) $ zip rs (repeat 1)
-    swp = l' * (fst $ Model.probsParts rm)
-    rll = Map.fromList [ (r, singletonRLL l' dw)
-                       | (r,dw) <- Model.dynamicPart rm
-                       ]
-
-    in SenderLogLik m val sc rc os or swp rll
-  where
-    isSend (Send _) = True
-    isSend (Receive _) = False
-    
-    toIntervalId (Send i) = i
-    toIntervalId (Receive i') = i'
+      
       
 unionSLL :: SenderLogLik -> SenderLogLik -> SenderLogLik
-unionSLL (SenderLogLik m1 val1 sc1 rc1 os1 or1 swp1 rll1)
-         (SenderLogLik m2 val2 sc2 rc2 os2 or2 swp2 rll2) =
+unionSLL (SenderLogLik m1 val1 sc1 rc1 obs1 swp1 rll1)
+         (SenderLogLik m2 val2 sc2 rc2 obs2 swp2 rll2) =
     SenderLogLik m1
                  (val1 + val2)
                  (sc1 + sc2)
                  (unionWith' (+) rc1 rc2)
-                 (unionWith' (+) os1 os2)
-                 (unionWith' (+) or1 or2)
+                 (unionWith' (+) obs1 obs2)
                  (swp1 + swp2)
                  (unionWith' unionRLL rll1 rll2)
 
@@ -167,9 +148,6 @@ insert (c, (Message f ts)) (LogLik p sllm) = let
     sllm' = Map.insert f sll sllm
     in resid `seq` (LogLik p sllm', resid)
 
-
-data Score = Score !(Vector Double) !(Vector Double) !(Vector Double)
-data Fisher = Fisher !(Matrix Double) !(Matrix Double) !(Matrix Double)
 
 deviance :: LogLik -> Double
 deviance (LogLik _ sllm) =
@@ -201,8 +179,77 @@ residDf ll@(LogLik p _) =
     sv = Params.svars p
     dv = Params.dvars p
 
+
+
+data Score = Score { sscore :: !(Vector Double)
+                   , dscore :: !(Vector Double) } deriving (Eq, Show)
+
+senderScore :: SenderLogLik -> Score
+senderScore sll = let
+    o_svars = SVars.sumWithSender s
+                  [ (r, realToFrac w)
+                  | (r,w) <- Map.assocs $ receiveCount sll ] sv
+
+    e_svars = SVars.sumWithSender s
+                  [ (r, staticWeightPart sll
+                        + (fromMaybe 0 . fmap dynamicWeightPart . Map.lookup r)
+                              (receiverLogLik sll) )
+                  | r <- rs ] sv
+    
+    o_dvars = fromAssocs [ (v, realToFrac c)
+                         | (v,c) <- Map.assocs $ observedDVars sll ]
+    
+    e_dvars = fromAssocs $ Map.assocs $
+                  foldl' (flip $ unionWith' (+)) Map.empty
+                      [ expectedDVarPart rll
+                      | rll <- Map.elems $ receiverLogLik sll ]
+    in Score (o_svars `subVector` e_svars)
+             (o_dvars `subVector` e_dvars)
+  where
+    s = Model.sender $ model sll
+    rs = Params.receivers s $ Model.params $ model sll
+    sv = Params.svars $ Model.params $ model sll
+    dv = Params.dvars $ Model.params $ model sll
+    
+    fromAssocs vws = accumVector (+) (constantVector (DVars.dim dv) 0) $
+        [ (DVars.index v dv, w) | (v,w) <- vws ]
+    
+
 score :: LogLik -> Score
-score = undefined
+score ll = 
+    foldl' (\(Score s1 d1) (Score s2 d2) ->
+                Score (addVector s1 s2) (addVector d1 d2))
+           emptyScore
+           [ senderScore sll | sll <- Map.elems $ senderLogLik ll ]
+  where
+    sv = Params.svars $ params ll
+    dv = Params.dvars $ params ll
+    emptyScore = Score (constantVector (SVars.dim sv) 0)
+                       (constantVector (DVars.dim dv) 0)
+
+
+data Fisher = Fisher !(Matrix Double) !(Matrix Double) !(Matrix Double)
+
+{-
+data ReceiverLogLik =
+    ReceiverLogLik { dynamicWeightPart :: !Double
+                   , expectedDVarPart :: !(Map DVar Double)
+                   , expectedDVarCrossPart :: !(Map (DVar,DVar) Double)
+                   }
+    deriving (Eq, Show)
+
+data SenderLogLik =
+    SenderLogLik { model :: !SenderModel
+                 , value :: !Double
+                 , sendCount :: !Int
+                 , receiveCount :: !(Map ReceiverId Int)
+                 , observedDVars :: !(Map DVar Int)
+                 , staticWeightPart :: !Double
+                 , receiverLogLik :: !(Map ReceiverId ReceiverLogLik)
+                 }
+    deriving (Eq, Show)
+-}
 
 fisher :: LogLik -> Fisher
 fisher = undefined
+
