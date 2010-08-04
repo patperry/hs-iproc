@@ -4,11 +4,14 @@ module SVars (
     lookupSender,
     lookupDyad,
     
+    sumWithSender,
+    
     fromActors,
     fromActorsWith,
     interactions,
   ) where
    
+import Data.List( foldl' )
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Numeric.LinearAlgebra
@@ -51,3 +54,10 @@ lookupDyad :: SenderId -> ReceiverId -> SVars -> Vector Double
 lookupDyad s r (SVars _ m _ _) = 
     Map.findWithDefault (error "unknown receiver") r $
          Map.findWithDefault (error "unknown sender") s m
+
+sumWithSender :: SenderId -> [(ReceiverId, Double)] -> SVars -> Vector Double
+sumWithSender s rws sv =
+    foldl' (flip $ \(r,w) ->
+                addVectorWithScale w (lookupDyad s r sv) 1)
+           (constantVector (dim sv) 0)
+           rws
