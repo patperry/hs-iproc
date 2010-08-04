@@ -3,6 +3,8 @@ module DVars (
     sendIntervals,
     receiveIntervals,
     fromIntervals,
+    dim,
+    index,
     
     Context,
     context,
@@ -23,6 +25,7 @@ import Actor
 import Context( Context )
 import qualified Context as Context
 import Intervals( Intervals, IntervalId )
+import qualified Intervals as Intervals
 import qualified History as History
 
 
@@ -37,6 +40,13 @@ data DVar = Send !IntervalId
 
 fromIntervals :: Intervals -> Intervals -> DVars
 fromIntervals = DVars
+
+dim :: DVars -> Int
+dim (DVars si ri) = Intervals.size si + Intervals.size ri
+
+index :: DVar -> DVars -> Int
+index (Send i) _ = i
+index (Receive i') (DVars si _) = Intervals.size si + i'
 
 send :: DVar -> Maybe IntervalId
 send dvar = case dvar of

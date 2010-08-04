@@ -38,9 +38,8 @@ import qualified DVars as DVars
 data Params =
     Params { svars :: !SVars
            , dvars :: !DVars
-           , staticCoefs :: !(Vector Double)
-           , sendCoefs :: !(Vector Double)
-           , receiveCoefs :: !(Vector Double)
+           , scoefs :: !(Vector Double)
+           , dcoefs :: !(Vector Double)
            , hasSelfLoops :: !Bool
            }
     deriving (Eq, Show)
@@ -51,8 +50,7 @@ defaultParams sv dv =
     Params sv
            dv
            (constantVector (SVars.dim sv) 0)
-           (constantVector (Intervals.size $ DVars.sendIntervals dv) 0)
-           (constantVector (Intervals.size $ DVars.receiveIntervals dv) 0)
+           (constantVector (DVars.dim dv) 0)
            False
 
 validDyad :: SenderId -> ReceiverId ->  Params -> Bool
@@ -73,20 +71,17 @@ logWeight c s r p =
     staticLogWeight s r p + dynamicLogWeight c s r p
 
 staticLogWeight :: SenderId -> ReceiverId -> Params -> Double
-staticLogWeight s r p@(Params sv dv c0 _ _ _) | not $ validDyad s r p = -1/0
-                                              | otherwise = let
+staticLogWeight s r p@(Params sv dv sc _ _) | not $ validDyad s r p = -1/0
+                                            | otherwise = let
     x0 = SVars.lookupDyad s r sv
-    lw0 = dotVector x0 c0
+    lw0 = dotVector x0 sc
     in lw0
     
 dynamicLogWeight :: Context -> SenderId -> ReceiverId -> Params -> Double
-dynamicLogWeight c s r p@(Params sv dv _ cs cr _) | not $ validDyad s r p = -1/0
-                                                   | otherwise = let
+dynamicLogWeight c s r p@(Params sv dv _ dc _) | not $ validDyad s r p = -1/0
+                                               | otherwise = let
     ds = DVars.lookupDyad c s r dv
-    lw1 = foldl' (+) 0 [ case d of Send i -> atVector cs i
-                                   Receive i' -> atVector cr i' 
-                       | d <- ds
-                       ]
+    lw1 = foldl' (+) 0 [ atVector dc (DVars.index d dv) | d <- ds ]
     in lw1
 
 weight :: Context -> SenderId -> ReceiverId -> Params -> Double
@@ -115,13 +110,7 @@ probs :: Context -> SenderId -> Params -> [(ReceiverId, Double)]
 probs c s p = [ (r, prob c s r p) | r <- receivers s p ]
 
 expectedSVars :: Context -> SenderId -> Params -> Vector Double
-expectedSVars c s p =
-    foldl' (flip $ \(r,w) ->
-                addVectorWithScale w (SVars.lookupDyad s r sv) 1)
-           (constantVector (SVars.dim sv) 0)
-           (probs c s p)
-  where
-    sv = svars p
+expectedSVars c s p = SVars.sumWithSender s (probs c s p) (svars p)
 
 expectedDVars :: Context -> SenderId -> Params -> [(DVar, Double)]
 expectedDVars c s p = Map.assocs $

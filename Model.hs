@@ -151,7 +151,7 @@ senderModel p s = let
 
   where
     sv = Params.svars p
-    coefs = Params.staticCoefs p
+    coefs = Params.scoefs p
     validReceiver r = Params.validDyad s r p
     
     weight x = let
@@ -192,9 +192,5 @@ receiverModel c (SenderModel p s sw) = let
 
   where
     dv = Params.dvars p
-    scoefs = Params.sendCoefs p
-    rcoefs = Params.receiveCoefs p
-    
     logWeight = foldl' (+) 0 . map logWeightVar
-    logWeightVar (Send i) = atVector scoefs i
-    logWeightVar (Receive i') = atVector rcoefs i'
+    logWeightVar v = atVector (Params.dcoefs p) (DVars.index v dv)

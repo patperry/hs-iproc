@@ -250,18 +250,15 @@ instance Arbitrary MessageWithVars where
 
 params :: SVars -> DVars -> Gen Params
 params sv dv = let
-    p0 = SVars.dim sv
-    ps = Intervals.size $ DVars.sendIntervals dv
-    pr = Intervals.size $ DVars.receiveIntervals dv
+    ps = SVars.dim sv
+    pd = DVars.dim dv
     in do
-        c0 <- listVector p0 `fmap` replicateM p0 (choose (-5,5))
-        cs <- listVector ps `fmap` replicateM ps (choose (-5,5))
-        cr <- listVector pr `fmap` replicateM pr (choose (-5,5))
+        sc <- listVector ps `fmap` replicateM ps (choose (-5,5))
+        dc <- listVector pd `fmap` replicateM pd (choose (-5,5))
         l <- arbitrary
         return $ (Params.defaultParams sv dv)
-                     { Params.staticCoefs = c0
-                     , Params.sendCoefs = cs
-                     , Params.receiveCoefs = cr
+                     { Params.scoefs = sc
+                     , Params.dcoefs = dc
                      , Params.hasSelfLoops = l
                      }
 
