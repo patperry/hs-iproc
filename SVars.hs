@@ -58,6 +58,6 @@ lookupDyad s r (SVars _ m _ _) =
 sumWithSender :: SenderId -> [(ReceiverId, Double)] -> SVars -> Vector Double
 sumWithSender s rws sv =
     foldl' (flip $ \(r,w) ->
-                addVectorWithScale w (lookupDyad s r sv) 1)
+                addVectorWithScales w (lookupDyad s r sv) 1)
            (constantVector (dim sv) 0)
            rws

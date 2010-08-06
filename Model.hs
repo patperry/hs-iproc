@@ -99,7 +99,7 @@ probsParts (ReceiverModel sw dw) =
 
 expectedSVars :: ReceiverModel -> Vector Double
 expectedSVars (ReceiverModel sw dw) =
-    foldl' (flip $ \(x,p) -> addVectorWithScale p x 1) zero xps
+    foldl' (flip $ \(x,p) -> addVectorWithScales p x 1) zero xps
   where
     invscale = 1 + dynamicDiffWeightSum dw / staticWeightSum sw
     xps =
