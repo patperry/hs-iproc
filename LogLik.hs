@@ -228,7 +228,11 @@ score ll =
                        (constantVector (DVars.dim dv) 0)
 
 
-data Fisher = Fisher !(Matrix Double) !(Matrix Double) !(Matrix Double)
+data Fisher =
+    Fisher { ssfisher :: !(Matrix Double)
+           , sdfisher :: !(Matrix Double)
+           , ddfisher :: !(Matrix Double)
+           } deriving (Eq, Show)
 
 {-
 data ReceiverLogLik =
