@@ -47,6 +47,28 @@ receiveIntervals :: Intervals
 receiveIntervals = Intervals.fromList $
     map (realToFrac . (3600*) . (2^^)) $
         [ -7..11 ]
+
+{-
+fromEmployee :: Employee -> (ActorId, Actor)
+fromEmployee (Employee eid _ _ _ g s d) =
+    let f = if g == Female then 1 else 0
+        j = if s == Junior then 1 else 0
+        l = if d == Legal then 1 else 0
+        t = if d == Trading then 1 else 0
+    in (eid, Actor $ listVector 3
+        [ 1, f, j])
+
+sendIntervals :: Intervals
+sendIntervals = Intervals.fromList $
+    map (realToFrac . (3600*) . (2^^)) $    
+        [ 0 ]
+
+receiveIntervals :: Intervals
+receiveIntervals = Intervals.fromList $
+    map (realToFrac . (3600*) . (2^^)) $
+        [ -1..0 ]
+-}
+
         
 main = do
     conn <- connectSqlite3 "enron.db"
@@ -71,6 +93,8 @@ main = do
     putStrLn $ "Deviance: " ++ show (LogLik.deviance ll)
     putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)    
     
-    putStrLn $ "Score: \n" ++ show (LogLik.score ll)
+    let (score,fisher) = LogLik.fisherWithScore ll
+    putStrLn $ "Score: \n" ++ show score
+    putStrLn $ "Fisher: \n" ++ show fisher
     
     disconnect conn

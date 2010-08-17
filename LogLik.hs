@@ -12,6 +12,7 @@ module LogLik (
     Score(..),
     score,
     fisher,
+    fisherWithScore,
     
     ) where
  
@@ -181,39 +182,90 @@ residDf ll@(LogLik p _) =
 
 
 
-data Score = Score { sscore :: !(Vector Double)
-                   , dscore :: !(Vector Double) } deriving (Eq, Show)
+data Score =
+    Score { sscore :: !(Vector Double)
+          , dscore :: !(Vector Double) }
+    deriving (Show)
+
+data Fisher =
+    Fisher { ssfisher :: !(Herm Matrix Double)
+           , sdfisher :: !(Matrix Double)
+           , ddfisher :: !(Herm Matrix Double)
+           }
+    deriving (Show)
 
 senderScore :: SenderLogLik -> Score
-senderScore sll = let
-    o_svars = SVars.sumWithSender s
-                  [ (r, realToFrac w)
-                  | (r,w) <- Map.assocs $ receiveCount sll ] sv
+senderScore = fst . senderFisherWithScore
 
-    e_svars = SVars.sumWithSender s
-                  [ (r, staticWeightPart sll
-                        + (fromMaybe 0 . fmap dynamicWeightPart . Map.lookup r)
-                              (receiverLogLik sll) )
-                  | r <- rs ] sv
+senderFisher :: SenderLogLik -> Fisher
+senderFisher = snd . senderFisherWithScore
+
+senderFisherWithScore :: SenderLogLik -> (Score, Fisher)
+senderFisherWithScore sll = let
+    (rs,xs) = unzip $ SVars.lookupSender s sv
+    cs = [ (fromIntegral . Map.findWithDefault 0 r) (receiveCount sll) | r <- rs ]
+
+    ws = [ staticWeightPart sll * Model.prob p0 r
+           + (fromMaybe 0 . fmap dynamicWeightPart . Map.lookup r) rll | r <- rs ]
     
-    o_dvars = fromAssocs [ (v, realToFrac c)
-                         | (v,c) <- Map.assocs $ observedDVars sll ]
+    o_sv = weightedSumVector $ zip cs xs
+    e_sv = weightedSumVector $ zip ws xs
+    cov_sv = mapHerm (scaleMatrix (fromIntegral $ sendCount sll)) $
+                 weightedCovMatrix MLCov $ zip ws xs
+
+    o_dv = fromAssocs [ (v, fromIntegral c)
+                      | (v,c) <- Map.assocs $ observedDVars sll ]
     
-    e_dvars = fromAssocs $ Map.assocs $
-                  foldl' (flip $ unionWith' (+)) Map.empty
+    e_dv = fromAssocs $ Map.assocs $
+               foldl' (flip $ unionWith' (+)) Map.empty
                       [ expectedDVarPart rll
                       | rll <- Map.elems $ receiverLogLik sll ]
-    in Score (o_svars `subVector` e_svars)
-             (o_dvars `subVector` e_dvars)
+
+    e_dv2 = fromAssocs2 $ Map.assocs $
+                foldl' (flip $ unionWith' (+)) Map.empty
+                       [ expectedDVarCrossPart rll
+                       | rll <- Map.elems $ receiverLogLik sll ]
+
+    cov_dv = Herm Upper $ rank1UpdateMatrix (-1) e_dv e_dv e_dv2
+    
+    e_svdv = matrixViewVector (SVars.dim sv, DVars.dim dv) $ sumVector $
+                 (constantVector (SVars.dim sv * DVars.dim dv) 0):
+                 [ kroneckerVector
+                       (fromAssocs $ Map.assocs $ expectedDVarPart rll)
+                       (SVars.lookupDyad s r sv)
+                 | (r,rll) <- Map.assocs $ receiverLogLik sll ]
+    cov_svdv = rank1UpdateMatrix (-1) e_sv e_dv e_svdv
+    
+    cov_svdv' = matrixViewVector (SVars.dim sv, DVars.dim dv) $ sumVector $
+                 (constantVector (SVars.dim sv * DVars.dim dv) 0):
+                 [ kroneckerVector
+                       (fromAssocs $ Map.assocs $ expectedDVarPart rll)
+                       (SVars.lookupDyad s r sv `subVector` e_sv)
+                 | (r,rll) <- Map.assocs $ receiverLogLik sll ] :: Matrix Double
+                 
+    score = Score (o_sv `subVector` e_sv) (o_dv `subVector` e_dv)
+    fisher = Fisher cov_sv cov_svdv' cov_dv
+    
+    in (score, fisher)
   where
     s = Model.sender $ model sll
-    rs = Params.receivers s $ Model.params $ model sll
-    sv = Params.svars $ Model.params $ model sll
-    dv = Params.dvars $ Model.params $ model sll
+    p = Model.params $ model sll
+    p0 = Model.staticReceiverModel $ model sll
+    sv = Params.svars p
+    dv = Params.dvars p
+    rll = receiverLogLik sll
     
-    fromAssocs vws = accumVector (+) (constantVector (DVars.dim dv) 0) $
-        [ (DVars.index v dv, w) | (v,w) <- vws ]
+    fromAssocs vws = accumVector (+)
+        (constantVector (DVars.dim dv) 0) $
+            [ (DVars.index v dv, w) | (v,w) <- vws ]
     
+    fromAssocs2 vvws = accumMatrix (+)
+        (constantMatrix (DVars.dim dv, DVars.dim dv) 0) $
+            [ ((DVars.index v dv, DVars.index v' dv), w) | ((v,v'),w) <- vvws ]
+
+    mapHerm f (Herm u a) = Herm u $ f a
+
+
 
 score :: LogLik -> Score
 score ll = 
@@ -227,33 +279,28 @@ score ll =
     emptyScore = Score (constantVector (SVars.dim sv) 0)
                        (constantVector (DVars.dim dv) 0)
 
-
-data Fisher =
-    Fisher { ssfisher :: !(Matrix Double)
-           , sdfisher :: !(Matrix Double)
-           , ddfisher :: !(Matrix Double)
-           } deriving (Eq, Show)
-
-{-
-data ReceiverLogLik =
-    ReceiverLogLik { dynamicWeightPart :: !Double
-                   , expectedDVarPart :: !(Map DVar Double)
-                   , expectedDVarCrossPart :: !(Map (DVar,DVar) Double)
-                   }
-    deriving (Eq, Show)
-
-data SenderLogLik =
-    SenderLogLik { model :: !SenderModel
-                 , value :: !Double
-                 , sendCount :: !Int
-                 , receiveCount :: !(Map ReceiverId Int)
-                 , observedDVars :: !(Map DVar Int)
-                 , staticWeightPart :: !Double
-                 , receiverLogLik :: !(Map ReceiverId ReceiverLogLik)
-                 }
-    deriving (Eq, Show)
--}
+fisherWithScore :: LogLik -> (Score, Fisher)
+fisherWithScore ll = 
+    foldl' (\((Score s1 d1), (Fisher ss1 sd1 dd1))
+             ((Score s2 d2), (Fisher ss2 sd2 dd2)) ->
+                let score = Score (addVector s1 s2)
+                                  (addVector d1 d2)
+                    fisher = Fisher (zipHerm addMatrix ss1 ss2)
+                                    (addMatrix sd1 sd2)
+                                    (zipHerm addMatrix dd1 dd2)
+                in score `seq` fisher `seq` (score, fisher)
+           )
+           (emptyScore, emptyFisher)
+           [ senderFisherWithScore sll | sll <- Map.elems $ senderLogLik ll ]
+  where
+    sv = Params.svars $ params ll
+    dv = Params.dvars $ params ll
+    emptyScore = Score (constantVector (SVars.dim sv) 0)
+                       (constantVector (DVars.dim dv) 0)
+    emptyFisher = Fisher (Herm Upper $ constantMatrix (SVars.dim sv, SVars.dim sv) 0)
+                         (constantMatrix (SVars.dim sv, DVars.dim dv) 0)
+                         (Herm Upper $ constantMatrix (DVars.dim dv, DVars.dim dv) 0)
+    zipHerm f (Herm u a) (Herm _ b) = Herm u (f a b)
 
 fisher :: LogLik -> Fisher
-fisher = undefined
-
+fisher = snd . fisherWithScore
