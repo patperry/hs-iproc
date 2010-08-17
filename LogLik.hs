@@ -11,6 +11,7 @@ module LogLik (
     
     Score(..),
     score,
+    Fisher(..),
     fisher,
     fisherWithScore,
     
