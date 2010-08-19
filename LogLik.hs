@@ -209,10 +209,10 @@ senderFisherWithScore sll = let
     ws = [ staticWeightPart sll * Model.prob p0 r
            + (fromMaybe 0 . fmap dynamicWeightPart . Map.lookup r) rll | r <- rs ]
     
-    o_sv = weightedSumVector $ zip cs xs
-    e_sv = weightedSumVector $ zip ws xs
+    o_sv = weightedSumVector (SVars.dim sv) $ zip cs xs
+    e_sv = weightedSumVector (SVars.dim sv) $ zip ws xs
     cov_sv = mapHerm (scaleMatrix (fromIntegral $ sendCount sll)) $
-                 weightedCovMatrix MLCov $ zip ws xs
+                 weightedCovMatrix (SVars.dim sv) MLCov $ zip ws xs
 
     o_dv = fromAssocs [ (v, fromIntegral c)
                       | (v,c) <- Map.assocs $ observedDVars sll ]
@@ -229,16 +229,16 @@ senderFisherWithScore sll = let
 
     cov_dv = Herm Upper $ rank1UpdateMatrix (-1) e_dv e_dv e_dv2
     
-    e_svdv = matrixViewVector (SVars.dim sv, DVars.dim dv) $ sumVector $
-                 (constantVector (SVars.dim sv * DVars.dim dv) 0):
+    e_svdv = matrixViewVector (SVars.dim sv, DVars.dim dv) $ sumVector
+                 (SVars.dim sv * DVars.dim dv)
                  [ kroneckerVector
                        (fromAssocs $ Map.assocs $ expectedDVarPart rll)
                        (SVars.lookupDyad s r sv)
                  | (r,rll) <- Map.assocs $ receiverLogLik sll ]
     cov_svdv = rank1UpdateMatrix (-1) e_sv e_dv e_svdv
     
-    cov_svdv' = matrixViewVector (SVars.dim sv, DVars.dim dv) $ sumVector $
-                 (constantVector (SVars.dim sv * DVars.dim dv) 0):
+    cov_svdv' = matrixViewVector (SVars.dim sv, DVars.dim dv) $ sumVector
+                 (SVars.dim sv * DVars.dim dv)
                  [ kroneckerVector
                        (fromAssocs $ Map.assocs $ expectedDVarPart rll)
                        (SVars.lookupDyad s r sv `subVector` e_sv)
