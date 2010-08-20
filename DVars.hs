@@ -18,7 +18,7 @@ module DVars (
     ) where
         
 import qualified Data.Map as Map
-import Data.Maybe( maybeToList )
+import Data.Maybe( maybeToList, catMaybes )
 import Data.Time
 
 import Actor
@@ -59,24 +59,32 @@ receive dvar = case dvar of
     Receive i' -> Just i'
     
 context :: UTCTime -> DVars -> Context
-context t0 (DVars sint rint) = Context.empty sint rint t0
+context t0 (DVars sint rint) = Context.empty t0
 
 lookupSender :: Context -> SenderId -> DVars -> [(ReceiverId, [DVar])]
-lookupSender c s _ =
-    Map.toList $ Map.unionsWith (++) $ map Map.fromList
-        [ [ (r, [Send i])
-          | (r,i) <- History.pastEvents $ Context.senderHistory s c
+lookupSender c s (DVars sint rint) =
+    Map.toList $ Map.unionsWith (++) $ map (Map.fromList . catMaybes)
+        [ [ case Intervals.lookup dt sint of
+                Nothing -> Nothing
+                Just i  -> Just (r, [Send i])
+          | (r,dt) <- History.pastEvents $ Context.senderHistory s c
           ]
-        , [ (r, [Receive i'])
-          | (r,i') <- History.pastEvents $ Context.receiverHistory s c
+        , [ case Intervals.lookup dt' rint of
+                Nothing -> Nothing
+                Just i' -> Just (r, [Receive i'])
+          | (r,dt') <- History.pastEvents $ Context.receiverHistory s c
           ]
         ]
-  where
-    singleton a = [a]
 
 lookupDyad :: Context -> SenderId -> ReceiverId -> DVars -> [DVar]
-lookupDyad c s r _ =
+lookupDyad c s r (DVars sint rint) =
     concatMap maybeToList
-        [ fmap Send $ History.lookup r $ Context.senderHistory s c
-        , fmap Receive $ History.lookup r $ Context.receiverHistory s c
+        [ do
+              dt <- History.lookup r $ Context.senderHistory s c
+              i <- Intervals.lookup dt sint
+              return $ Send i
+        , do
+              dt' <- History.lookup r $ Context.receiverHistory s c
+              i' <- Intervals.lookup dt' rint
+              return $ Receive i'
         ]

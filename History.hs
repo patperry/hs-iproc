@@ -1,12 +1,11 @@
 module History (
-    History( intervals, time ),
+    History( time ),
     empty,
     insert,
     lookup,
     
     currentEvents,
     pastEvents,
-    pastEventsWithTimes,
     
     advanceTo,
     advanceBy,
@@ -22,65 +21,37 @@ import Data.Set( Set )
 import qualified Data.Set as Set
 import Data.Time
 
-import Intervals( Intervals, IntervalId )
-import qualified Intervals as Intervals
-
-
-data EventDiffTime = EventDiffTime !IntervalId !NominalDiffTime deriving (Eq, Show)
-
 data History e = 
-    History { intervals :: !Intervals
-            , time :: !UTCTime
-            , pastEventMap :: !(Map e EventDiffTime)
+    History { time :: !UTCTime
+            , pastEventMap :: !(Map e NominalDiffTime)
             , currentEventSet :: !(Set e)
             } deriving (Eq, Show)
 
-empty :: Intervals -> UTCTime -> History e
-empty iset t0 = History iset t0 Map.empty Set.empty
+empty :: UTCTime -> History e
+empty t0 = History t0 Map.empty Set.empty
 
 insert :: (Ord e) => e -> History e -> History e
-insert e (History iset t past cur) = let
+insert e (History t past cur) = let
     cur' = Set.insert e cur
-    in History iset t past cur'
+    in History t past cur'
 
-lookup :: (Ord e) => e -> History e -> Maybe IntervalId
-lookup e h = unEventDiffTime `fmap` Map.lookup e (pastEventMap h)
-  where
-    unEventDiffTime (EventDiffTime i _) = i
+lookup :: (Ord e) => e -> History e -> Maybe NominalDiffTime
+lookup e h = Map.lookup e (pastEventMap h)
 
 currentEvents :: History e -> [e]
 currentEvents = Set.elems . currentEventSet
 
-pastEvents :: History e -> [(e, IntervalId)]
-pastEvents = map unEventDiffTime . Map.assocs . pastEventMap
-  where
-    unEventDiffTime (e, EventDiffTime i _) = (e, i)
-
-pastEventsWithTimes :: History e -> [(e, NominalDiffTime)]
-pastEventsWithTimes = map unEventDiffTime . Map.assocs . pastEventMap
-  where
-    unEventDiffTime (e, EventDiffTime _ t) = (e, t)
+pastEvents :: History e -> [(e, NominalDiffTime)]
+pastEvents = Map.assocs . pastEventMap
 
 advanceTo :: (Ord e) => UTCTime -> History e -> History e
-advanceTo t h@(History iset t0 past cur) | t == t0 = h
-                                         | t < t0 = error "negative time difference"
-                                         | otherwise = let
+advanceTo t h@(History t0 past cur) | t == t0 = h
+                                    | t < t0 = error "negative time difference"
+                                    | otherwise = let
     dt = t `diffUTCTime` t0
-    iset_assocs = Intervals.assocs iset
-    past' = flip Map.mapMaybe past $ \(EventDiffTime i d) ->
-                let d'  = d + dt
-                    id' = listToMaybe [ EventDiffTime int_id d'
-                                      | (int_id, int) <- drop i iset_assocs
-                                      , d' <= int ]
-                in id'
-    past'' = case Intervals.lookup dt iset of
-                 Nothing -> past'
-                 Just i0 ->
-                    Set.fold (\e -> Map.insert e $ EventDiffTime i0 dt)
-                             past'
-                             cur
-                             
-    in History iset t past'' Set.empty
+    past' = Map.map (dt+) past
+    past'' = Set.fold (`Map.insert` dt) past' cur
+    in History t past'' Set.empty
 
 advanceBy :: (Ord e) => NominalDiffTime -> History e -> History e
 advanceBy dt h | dt == 0 = h
