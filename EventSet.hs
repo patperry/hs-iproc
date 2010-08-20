@@ -1,5 +1,6 @@
 module EventSet (
     EventSet( currentTime ),
+    null,
     empty,
     insert,
     lookup,
@@ -12,7 +13,7 @@ module EventSet (
     
     ) where
 
-import Prelude hiding ( lookup )
+import Prelude hiding ( lookup, null )
 
 import Data.Map( Map )
 import qualified Data.Map as Map
@@ -26,6 +27,9 @@ data EventSet e =
              , pastEventMap :: !(Map e NominalDiffTime)
              , currentEventSet :: !(Set e)
              } deriving (Eq, Show)
+
+null :: EventSet e -> Bool
+null (EventSet _ p c) = Map.null p && Set.null c
 
 empty :: UTCTime -> EventSet e
 empty t0 = EventSet t0 Map.empty Set.empty

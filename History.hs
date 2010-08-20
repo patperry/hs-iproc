@@ -2,6 +2,7 @@ module History (
     History,
     currentTime,
     
+    null,
     empty,
     insert,
     advanceTo,
@@ -15,6 +16,8 @@ module History (
     accum,
 
     ) where
+
+import Prelude hiding ( null )
 
 import Data.List( foldl', mapAccumL )
 import Data.Map( Map )
@@ -34,6 +37,9 @@ data History =
             , receiverMap :: !(Map ReceiverId (EventSet SenderId))
             }
     deriving (Eq, Show)
+
+null :: History -> Bool
+null (History _ sm rm) = Map.null sm && Map.null rm
     
 empty :: UTCTime -> History
 empty t0 = History t0 Map.empty Map.empty
