@@ -30,8 +30,8 @@ import qualified Context as Context
 import DVars( DVars, DVar(..) )
 import qualified DVars as DVars
 
-import History( History )
-import qualified History as History
+import EventSet( EventSet )
+import qualified EventSet as EventSet
 
 import Intervals(Intervals, IntervalId )
 import qualified Intervals as Intervals
@@ -115,33 +115,25 @@ instance Arbitrary UTCTime where
         n <- arbitrary :: Gen Int
         return $ posixSecondsToUTCTime $ fromIntegral n
 
-data EmptyHistory = EmptyHistory UTCTime
-    deriving (Eq, Show)
-
-instance Arbitrary EmptyHistory where
-    arbitrary = do
-        t0 <- arbitrary
-        return $ EmptyHistory t0
-
-data UpdateHistory e = HistoryAdvanceBy NominalDiffTime
-                     | HistoryInsert e
+data UpdateEventSet e = EventSetAdvanceBy NominalDiffTime
+                     | EventSetInsert e
     deriving (Eq, Show)
     
-updateHistory :: (Ord e) => UpdateHistory e -> History e -> History e
-updateHistory (HistoryAdvanceBy dt) = History.advanceBy dt
-updateHistory (HistoryInsert e) = History.insert e
+updateEventSet :: (Ord e) => UpdateEventSet e -> EventSet e -> EventSet e
+updateEventSet (EventSetAdvanceBy dt) = EventSet.advanceBy dt
+updateEventSet (EventSetInsert e) = EventSet.insert e
     
-instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (UpdateHistory e) where
+instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (UpdateEventSet e) where
     arbitrary = do
         dt <- fmap abs arbitrary
         e <- choose (0,5)
-        elements [ HistoryAdvanceBy dt, HistoryInsert e]
+        elements [ EventSetAdvanceBy dt, EventSetInsert e]
 
-instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (History e) where
+instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (EventSet e) where
     arbitrary = do
-        (EmptyHistory t0) <- arbitrary
+        t0 <- arbitrary
         us <- arbitrary
-        return $ foldr updateHistory (History.empty t0) us
+        return $ foldr updateEventSet (EventSet.empty t0) us
 
 instance Arbitrary Message where
     arbitrary = do
@@ -401,69 +393,69 @@ prop_Intervals_lookup_beyond_last (NonEmptyIntervals iset) =
     tlast = Intervals.at (n - 1) iset
 
 
-tests_History = testGroup "History"
-    [ testProperty "currentEvents . insert" prop_History_currentEvents_insert
-    , testProperty "pastEvents . advanceBy" prop_History_pastEvents_advanceBy
-    , testProperty "lookup . advanceBy . insert" prop_History_lookup_advanceBy_insert
+tests_EventSet = testGroup "EventSet"
+    [ testProperty "current . insert" prop_EventSet_current_insert
+    , testProperty "past . advanceBy" prop_EventSet_past_advanceBy
+    , testProperty "lookup . advanceBy . insert" prop_EventSet_lookup_advanceBy_insert
     ]
     
-prop_History_currentEvents_insert h e =
-    (sort . History.currentEvents . History.insert e) h
+prop_EventSet_current_insert h e =
+    (sort . EventSet.current . EventSet.insert e) h
     ==
-    (sort . nub . (e:) . History.currentEvents) h
+    (sort . nub . (e:) . EventSet.current) h
   where
-    _ = h :: History Int
+    _ = h :: EventSet Int
     
-prop_History_pastEvents_advanceBy h (NonNegative dt)
+prop_EventSet_past_advanceBy h (NonNegative dt)
     | dt == 0 =
-        ((History.pastEvents . History.advanceBy dt) h)
+        ((EventSet.past . EventSet.advanceBy dt) h)
             `eq`
-            (History.pastEvents h)
+            (EventSet.past h)
     | otherwise =
-        ((History.pastEvents . History.advanceBy dt) h)
+        ((EventSet.past . EventSet.advanceBy dt) h)
             `eq`
             (nubBy ((==) `on` fst))
-                 (map (\e -> (e,dt)) (History.currentEvents h)
+                 (map (\e -> (e,dt)) (EventSet.current h)
                   ++
-                  map (\(e,t) -> (e,t+dt)) (History.pastEvents h)
+                  map (\(e,t) -> (e,t+dt)) (EventSet.past h)
                  )
   where
     eq xs ys = sort xs == sort ys
-    _ = h :: History Int
+    _ = h :: EventSet Int
     
-prop_History_lookup_advanceBy_insert h e (NonNegative dt) =
-    (History.lookup e
-     . History.advanceBy dt'
-     . History.insert e) h
+prop_EventSet_lookup_advanceBy_insert h e (NonNegative dt) =
+    (EventSet.lookup e
+     . EventSet.advanceBy dt'
+     . EventSet.insert e) h
         == Just dt'
   where
     dt' = succ dt
     _ = e :: Int
 
 tests_Context = testGroup "Context"
-    [ testProperty "senderHistory" prop_Context_senderHistory
-    , testProperty "receiverHistory" prop_Context_receiverHistory
+    [ testProperty "lookupSender" prop_Context_lookupSender
+    , testProperty "lookupReceiver" prop_Context_lookupReceiver
     ]
 
-prop_Context_senderHistory (MessageWithContext c m) (NonNegative dt) =
-        (History.advanceBy dt
-         . flip (foldr History.insert) ts
-         . Context.senderHistory f) c
+prop_Context_lookupSender (MessageWithContext c m) (NonNegative dt) =
+        (EventSet.advanceBy dt
+         . flip (foldr EventSet.insert) ts
+         . Context.lookupSender f) c
         ==
-        (Context.senderHistory f
+        (Context.lookupSender f
          . Context.advanceBy dt
          . Context.insert m) c
   where
     f = messageFrom m
     ts = messageTo m
 
-prop_Context_receiverHistory (MessageWithContext c m) (NonNegative dt) =
+prop_Context_lookupReceiver (MessageWithContext c m) (NonNegative dt) =
     flip all ts $ \t ->
-        (History.advanceBy dt
-         . History.insert f
-         . Context.receiverHistory t) c
+        (EventSet.advanceBy dt
+         . EventSet.insert f
+         . Context.lookupReceiver t) c
         ==
-        (Context.receiverHistory t
+        (Context.lookupReceiver t
          . Context.advanceBy dt
          . Context.insert m) c
   where
@@ -648,7 +640,7 @@ prop_Model_expectedDVars (SenderModelWithContext c sm) =
 main :: IO ()
 main = defaultMain [ tests_SVars
                    , tests_Intervals
-                   , tests_History
+                   , tests_EventSet
                    , tests_Context
                    , tests_DVars
                    , tests_Summary

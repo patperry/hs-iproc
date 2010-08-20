@@ -9,8 +9,8 @@ module Context (
 
     senders,
     receivers,
-    senderHistory,
-    receiverHistory,
+    lookupSender,
+    lookupReceiver,
     
     accum,
 
@@ -23,15 +23,15 @@ import Data.Time
 
 import Actor
 import Intervals( Intervals, IntervalId )
-import History( History )
-import qualified History as History
+import EventSet( EventSet )
+import qualified EventSet as EventSet
 import Message
 
 
 data Context =
     Context { time :: !UTCTime
-            , senderHistoryMap :: !(Map SenderId (History ReceiverId))
-            , receiverHistoryMap :: !(Map ReceiverId (History SenderId))
+            , senderHistoryMap :: !(Map SenderId (EventSet ReceiverId))
+            , receiverHistoryMap :: !(Map ReceiverId (EventSet SenderId))
             }
     deriving (Eq, Show)
     
@@ -57,9 +57,9 @@ insert (Message s rs) (Context t shm rhm) = let
     in Context t shm' rhm'
   where
     updateHistoryMap (x,ys) hm = let
-        h = History.advanceTo t $
-                 Map.findWithDefault (History.empty t) x hm
-        h' = foldl' (flip History.insert) h ys
+        h = EventSet.advanceTo t $
+                 Map.findWithDefault (EventSet.empty t) x hm
+        h' = foldl' (flip EventSet.insert) h ys
         in Map.insert x h' hm
 
 senders :: Context -> [SenderId]
@@ -68,15 +68,15 @@ senders (Context _ shm _) = Map.keys shm
 receivers :: Context -> [ReceiverId]
 receivers (Context _ _ rhm) = Map.keys rhm
 
-senderHistory :: SenderId -> Context -> History ReceiverId
-senderHistory s (Context t shm _) = 
-    History.advanceTo t $
-        Map.findWithDefault (History.empty t) s shm
+lookupSender :: SenderId -> Context -> EventSet ReceiverId
+lookupSender s (Context t shm _) = 
+    EventSet.advanceTo t $
+        Map.findWithDefault (EventSet.empty t) s shm
 
-receiverHistory :: ReceiverId -> Context -> History SenderId
-receiverHistory r (Context t _ rhm) = 
-    History.advanceTo t $
-        Map.findWithDefault (History.empty t) r rhm
+lookupReceiver :: ReceiverId -> Context -> EventSet SenderId
+lookupReceiver r (Context t _ rhm) = 
+    EventSet.advanceTo t $
+        Map.findWithDefault (EventSet.empty t) r rhm
 
 accum :: Context -> [(UTCTime, Message)] -> (Context, [(Context, Message)])
 accum =

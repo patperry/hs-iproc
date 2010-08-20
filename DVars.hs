@@ -26,7 +26,7 @@ import Context( Context )
 import qualified Context as Context
 import Intervals( Intervals, IntervalId )
 import qualified Intervals as Intervals
-import qualified History as History
+import qualified EventSet as EventSet
 
 
 data DVars =
@@ -67,12 +67,12 @@ lookupSender c s (DVars sint rint) =
         [ [ case Intervals.lookup dt sint of
                 Nothing -> Nothing
                 Just i  -> Just (r, [Send i])
-          | (r,dt) <- History.pastEvents $ Context.senderHistory s c
+          | (r,dt) <- EventSet.past $ Context.lookupSender s c
           ]
         , [ case Intervals.lookup dt' rint of
                 Nothing -> Nothing
                 Just i' -> Just (r, [Receive i'])
-          | (r,dt') <- History.pastEvents $ Context.receiverHistory s c
+          | (r,dt') <- EventSet.past $ Context.lookupReceiver s c
           ]
         ]
 
@@ -80,11 +80,11 @@ lookupDyad :: Context -> SenderId -> ReceiverId -> DVars -> [DVar]
 lookupDyad c s r (DVars sint rint) =
     concatMap maybeToList
         [ do
-              dt <- History.lookup r $ Context.senderHistory s c
+              dt <- EventSet.lookup r $ Context.lookupSender s c
               i <- Intervals.lookup dt sint
               return $ Send i
         , do
-              dt' <- History.lookup r $ Context.receiverHistory s c
+              dt' <- EventSet.lookup r $ Context.lookupReceiver s c
               i' <- Intervals.lookup dt' rint
               return $ Receive i'
         ]
