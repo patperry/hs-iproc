@@ -6,7 +6,7 @@ module DVars (
     dim,
     index,
     
-    Context,
+    History,
     context,
     lookupDyad,
     lookupSender,
@@ -22,8 +22,8 @@ import Data.Maybe( maybeToList, catMaybes )
 import Data.Time
 
 import Actor
-import Context( Context )
-import qualified Context as Context
+import History( History )
+import qualified History as History
 import Intervals( Intervals, IntervalId )
 import qualified Intervals as Intervals
 import qualified EventSet as EventSet
@@ -58,33 +58,33 @@ receive dvar = case dvar of
     Send _ -> Nothing
     Receive i' -> Just i'
     
-context :: UTCTime -> DVars -> Context
-context t0 (DVars sint rint) = Context.empty t0
+context :: UTCTime -> DVars -> History
+context t0 (DVars sint rint) = History.empty t0
 
-lookupSender :: Context -> SenderId -> DVars -> [(ReceiverId, [DVar])]
+lookupSender :: History -> SenderId -> DVars -> [(ReceiverId, [DVar])]
 lookupSender c s (DVars sint rint) =
     Map.toList $ Map.unionsWith (++) $ map (Map.fromList . catMaybes)
         [ [ case Intervals.lookup dt sint of
                 Nothing -> Nothing
                 Just i  -> Just (r, [Send i])
-          | (r,dt) <- EventSet.past $ Context.lookupSender s c
+          | (r,dt) <- EventSet.past $ History.lookupSender s c
           ]
         , [ case Intervals.lookup dt' rint of
                 Nothing -> Nothing
                 Just i' -> Just (r, [Receive i'])
-          | (r,dt') <- EventSet.past $ Context.lookupReceiver s c
+          | (r,dt') <- EventSet.past $ History.lookupReceiver s c
           ]
         ]
 
-lookupDyad :: Context -> SenderId -> ReceiverId -> DVars -> [DVar]
+lookupDyad :: History -> SenderId -> ReceiverId -> DVars -> [DVar]
 lookupDyad c s r (DVars sint rint) =
     concatMap maybeToList
         [ do
-              dt <- EventSet.lookup r $ Context.lookupSender s c
+              dt <- EventSet.lookup r $ History.lookupSender s c
               i <- Intervals.lookup dt sint
               return $ Send i
         , do
-              dt' <- EventSet.lookup r $ Context.lookupReceiver s c
+              dt' <- EventSet.lookup r $ History.lookupReceiver s c
               i' <- Intervals.lookup dt' rint
               return $ Receive i'
         ]

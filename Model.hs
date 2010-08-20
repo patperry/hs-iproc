@@ -31,7 +31,7 @@ import Data.Maybe( fromMaybe )
 import Numeric.LinearAlgebra
 
 import Actor( Receiver, ReceiverId, Sender, SenderId )
-import DVars( DVars, DVar(..), Context )
+import DVars( DVars, DVar(..), History )
 import qualified DVars as DVars
 import Params( Params )
 import qualified Params as Params
@@ -164,7 +164,7 @@ staticReceiverModel :: SenderModel -> ReceiverModel
 staticReceiverModel (SenderModel _ _ sw) =
     ReceiverModel sw (DynamicWeights Map.empty 0)
 
-receiverModel :: Context -> SenderModel -> ReceiverModel
+receiverModel :: History -> SenderModel -> ReceiverModel
 receiverModel c (SenderModel p s sw) = let
     rws = flip map (DVars.lookupSender c s dv) $ \(r,vs) -> let
         (StaticWeight _ w0 lw0 p0) =

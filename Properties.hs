@@ -24,8 +24,8 @@ import Numeric.LinearAlgebra
 
 import Actor( Actor(..), ActorId, SenderId, ReceiverId )
 
-import Context( Context )
-import qualified Context as Context
+import History( History )
+import qualified History as History
 
 import DVars( DVars, DVar(..) )
 import qualified DVars as DVars
@@ -174,45 +174,45 @@ instance Arbitrary DVars where
         rint <- arbitrary
         return $ DVars.fromIntervals sint rint
         
-context :: [SenderId] -> [ReceiverId]
+history :: [SenderId] -> [ReceiverId]
         -> UTCTime
         -> DVars
-        -> Gen Context
-context is js t0 dv = do
+        -> Gen History
+history is js t0 dv = do
     n <- choose (0,100)
     dts <- (sort . map (negate . abs)) `fmap` replicateM n arbitrary
     ms <- replicateM n $ message is js
     
     let ts = map (`addUTCTime` t0) dts
         c0 = DVars.context (minimum (t0:ts)) dv
-        c = fst $ Context.accum c0 $ zip ts ms
-        c' = Context.advanceTo t0 c
+        c = fst $ History.accum c0 $ zip ts ms
+        c' = History.advanceTo t0 c
     
     return $ c'
 
-data DVarsWithContext = DVarsWithContext Context DVars deriving (Show)
-instance Arbitrary DVarsWithContext where
+data DVarsWithHistory = DVarsWithHistory History DVars deriving (Show)
+instance Arbitrary DVarsWithHistory where
     arbitrary = do
         dv <- arbitrary
         (ActorIdList is) <- arbitrary
         (ActorIdList js) <- arbitrary
         t0 <- arbitrary
-        c <- context is js t0 dv
-        return $ DVarsWithContext c dv
+        h <- history is js t0 dv
+        return $ DVarsWithHistory h dv
 
-data MessageWithContext = MessageWithContext Context Message deriving (Show)
-instance Arbitrary MessageWithContext where
+data MessageWithHistory = MessageWithHistory History Message deriving (Show)
+instance Arbitrary MessageWithHistory where
     arbitrary = do
         dv <- arbitrary
         (ActorIdList is) <- arbitrary
         (ActorIdList js) <- arbitrary
         t0 <- arbitrary
-        c <- context is js t0 dv
+        h <- history is js t0 dv
         m <- message is js
-        return $ MessageWithContext c m
+        return $ MessageWithHistory h m
     
 data MessagesWithVars =
-    MessagesWithVars SVars DVars Context [(UTCTime, Message)] deriving (Show)
+    MessagesWithVars SVars DVars History [(UTCTime, Message)] deriving (Show)
 instance Arbitrary MessagesWithVars where
     arbitrary = do
         (ActorIdList ss) <- arbitrary
@@ -224,19 +224,19 @@ instance Arbitrary MessagesWithVars where
 
         sv <- svars ss rs
         dv <- arbitrary
-        c <- context ss rs t0 dv
+        h <- history ss rs t0 dv
         
-        return $ MessagesWithVars sv dv c $ zip ts ms
+        return $ MessagesWithVars sv dv h $ zip ts ms
 
 data MessageWithVars =
-    MessageWithVars SVars DVars Context Message deriving (Show)
+    MessageWithVars SVars DVars History Message deriving (Show)
 instance Arbitrary MessageWithVars where
     arbitrary = do
-        (MessagesWithVars sv dv c _) <- arbitrary
+        (MessagesWithVars sv dv h _) <- arbitrary
         let ss = Map.keys $ SVars.senders sv
             rs = Map.keys $ SVars.receivers sv
         m <- message ss rs
-        return $ MessageWithVars sv dv c m
+        return $ MessageWithVars sv dv h m
 
 
 params :: SVars -> DVars -> Gen Params
@@ -254,16 +254,16 @@ params sv dv = let
                      }
 
 data ParamsWithVars =
-    ParamsWithVars SVars DVars Context Params deriving (Show)
+    ParamsWithVars SVars DVars History Params deriving (Show)
 instance Arbitrary ParamsWithVars where
     arbitrary = do
-        (MessageWithVars sv dv c _) <- arbitrary
+        (MessageWithVars sv dv h _) <- arbitrary
         p <- params sv dv
-        return $ ParamsWithVars sv dv c p
+        return $ ParamsWithVars sv dv h p
 
-data SenderModelWithContext =
-    SenderModelWithContext Context SenderModel deriving (Show)
-instance Arbitrary SenderModelWithContext where
+data SenderModelWithHistory =
+    SenderModelWithHistory History SenderModel deriving (Show)
+instance Arbitrary SenderModelWithHistory where
     arbitrary = do
         (ActorIdList ss) <- arbitrary
         s <- elements ss
@@ -273,9 +273,9 @@ instance Arbitrary SenderModelWithContext where
         t0 <- arbitrary
         sv <- svars ss rs
         dv <- arbitrary
-        c <- context ss rs t0 dv
+        h <- history ss rs t0 dv
         p <- params sv dv
-        return $ SenderModelWithContext c $ Model.senderModel p s
+        return $ SenderModelWithHistory h $ Model.senderModel p s
 
 
 
@@ -432,32 +432,32 @@ prop_EventSet_lookup_advanceBy_insert h e (NonNegative dt) =
     dt' = succ dt
     _ = e :: Int
 
-tests_Context = testGroup "Context"
-    [ testProperty "lookupSender" prop_Context_lookupSender
-    , testProperty "lookupReceiver" prop_Context_lookupReceiver
+tests_History = testGroup "History"
+    [ testProperty "lookupSender" prop_History_lookupSender
+    , testProperty "lookupReceiver" prop_History_lookupReceiver
     ]
 
-prop_Context_lookupSender (MessageWithContext c m) (NonNegative dt) =
+prop_History_lookupSender (MessageWithHistory c m) (NonNegative dt) =
         (EventSet.advanceBy dt
          . flip (foldr EventSet.insert) ts
-         . Context.lookupSender f) c
+         . History.lookupSender f) c
         ==
-        (Context.lookupSender f
-         . Context.advanceBy dt
-         . Context.insert m) c
+        (History.lookupSender f
+         . History.advanceBy dt
+         . History.insert m) c
   where
     f = messageFrom m
     ts = messageTo m
 
-prop_Context_lookupReceiver (MessageWithContext c m) (NonNegative dt) =
+prop_History_lookupReceiver (MessageWithHistory c m) (NonNegative dt) =
     flip all ts $ \t ->
         (EventSet.advanceBy dt
          . EventSet.insert f
-         . Context.lookupReceiver t) c
+         . History.lookupReceiver t) c
         ==
-        (Context.lookupReceiver t
-         . Context.advanceBy dt
-         . Context.insert m) c
+        (History.lookupReceiver t
+         . History.advanceBy dt
+         . History.insert m) c
   where
     f = messageFrom m
     ts = messageTo m
@@ -467,19 +467,19 @@ tests_DVars = testGroup "DVars"
         , testProperty "lookupDyad (dual)" prop_DVars_lookupDyad_dual
         ]
 
-prop_DVars_lookupSender (DVarsWithContext c dv) =
-    flip all (Context.senders c) $ \s -> let
-        rds = DVars.lookupSender c s dv
+prop_DVars_lookupSender (DVarsWithHistory h dv) =
+    flip all (History.senders h) $ \s -> let
+        rds = DVars.lookupSender h s dv
         in map (second sort) rds
-               == [ (r, sort $ DVars.lookupDyad c s r dv)
+               == [ (r, sort $ DVars.lookupDyad h s r dv)
                   | (r,_) <- rds ]
 
 prop_DVars_lookupDyad_dual (ActorIdList ss) (ActorIdList rs) t0 int =
-    forAll (context ss rs t0 dv) $ \c ->
-        flip all (Context.senders c) $ \s ->
-        flip all (Context.receivers c) $ \r ->
-            (dual . sort) (DVars.lookupDyad c s r dv)
-                == sort (DVars.lookupDyad c r s dv)
+    forAll (history ss rs t0 dv) $ \h ->
+        flip all (History.senders h) $ \s ->
+        flip all (History.receivers h) $ \r ->
+            (dual . sort) (DVars.lookupDyad h s r dv)
+                == sort (DVars.lookupDyad h r s dv)
   where
     dv = DVars.fromIntervals int int
 
@@ -517,13 +517,13 @@ prop_Summary_singleton (MessageWithVars s d c m) = and
     ts = messageTo m
     smry = Summary.singleton s d (c,m)
 
-prop_Summary_fromList (MessagesWithVars s d c tms) =
-    Summary.fromList s d cms
+prop_Summary_fromList (MessagesWithVars s d h tms) =
+    Summary.fromList s d hms
         == foldl' Summary.union
                   (Summary.empty s d)
-                  (map (Summary.singleton s d) cms)
+                  (map (Summary.singleton s d) hms)
   where
-    (_,cms) = Context.accum c tms
+    (_,hms) = History.accum h tms
 
 
 tests_Model = testGroup "Model"
@@ -541,15 +541,15 @@ tests_Model = testGroup "Model"
     , testProperty "expectedDVars" prop_Model_expectedDVars
     ]
     
-prop_Model_receivers (SenderModelWithContext c sm) =
-    sort (Model.receivers (Model.receiverModel c sm))
+prop_Model_receivers (SenderModelWithHistory h sm) =
+    sort (Model.receivers (Model.receiverModel h sm))
         ==
         sort (Params.receivers s p)
   where
     p = Model.params sm
     s = Model.sender sm
 
-prop_Model_receivers_static (SenderModelWithContext c sm) =
+prop_Model_receivers_static (SenderModelWithHistory _ sm) =
     sort (Model.receivers (Model.staticReceiverModel sm))
         ==
         sort (Params.receivers s p)
@@ -557,28 +557,28 @@ prop_Model_receivers_static (SenderModelWithContext c sm) =
     p = Model.params sm
     s = Model.sender sm
 
-prop_Model_sum_probs_static (SenderModelWithContext _ sm) =
+prop_Model_sum_probs_static (SenderModelWithHistory _ sm) =
     sum (snd $ unzip $ Model.probs $ Model.staticReceiverModel sm) ~== 1
 
-prop_Model_prob_static (SenderModelWithContext _ sm) =
+prop_Model_prob_static (SenderModelWithHistory _ sm) =
     flip all (Model.probs $ Model.staticReceiverModel sm) $ \(r,prob) ->
         prob ~== Params.staticProb s r p
   where
     s = Model.sender sm
     p = Model.params sm
 
-prop_Model_sum_probs (SenderModelWithContext c sm) =
-    sum (snd $ unzip $ Model.probs $ Model.receiverModel c sm) ~== 1
+prop_Model_sum_probs (SenderModelWithHistory h sm) =
+    sum (snd $ unzip $ Model.probs $ Model.receiverModel h sm) ~== 1
 
-prop_Model_prob (SenderModelWithContext c sm) =
+prop_Model_prob (SenderModelWithHistory h sm) =
     flip all (Model.probs rm) $ \(r,prob) ->
-        prob ~== Params.prob c s r p
+        prob ~== Params.prob h s r p
   where
     s = Model.sender sm
-    rm = Model.receiverModel c sm
+    rm = Model.receiverModel h sm
     p = Model.params sm
 
-prop_Model_prob_parts_static (SenderModelWithContext _ sm) =
+prop_Model_prob_parts_static (SenderModelWithHistory _ sm) =
     flip all (Model.receivers rm) $ \r -> let
         (w0,d) = Model.probParts rm r
         in w0 == 1 && d == 0
@@ -587,17 +587,17 @@ prop_Model_prob_parts_static (SenderModelWithContext _ sm) =
     rm = Model.staticReceiverModel sm
     p = Model.params sm        
 
-prop_Model_prob_parts (SenderModelWithContext c sm) =
+prop_Model_prob_parts (SenderModelWithHistory h sm) =
     flip all (Model.receivers rm) $ \r -> let
         (w0,d) = Model.probParts rm r
         in w0 * Params.staticProb s r p + d
-               ~== Params.prob c s r p
+               ~== Params.prob h s r p
   where
     s = Model.sender sm
-    rm = Model.receiverModel c sm
+    rm = Model.receiverModel h sm
     p = Model.params sm        
 
-prop_Model_expectedSVars_static (SenderModelWithContext _ sm) =
+prop_Model_expectedSVars_static (SenderModelWithHistory _ sm) =
     Model.expectedSVars rm
         ~==
         foldl' (flip $ \(r,w) ->
@@ -610,29 +610,29 @@ prop_Model_expectedSVars_static (SenderModelWithContext _ sm) =
     p = Model.params sm
     sv = Params.svars p
 
-prop_Model_expectedSVars (SenderModelWithContext c sm) =
+prop_Model_expectedSVars (SenderModelWithHistory h sm) =
     Model.expectedSVars rm
         ~==
-        Params.expectedSVars c s p
+        Params.expectedSVars h s p
   where
     s = Model.sender sm
-    rm = Model.receiverModel c sm
+    rm = Model.receiverModel h sm
     p = Model.params sm
     sv = Params.svars p
 
-prop_Model_expectedDVars_static (SenderModelWithContext _ sm) =
+prop_Model_expectedDVars_static (SenderModelWithHistory _ sm) =
     Model.expectedDVars rm == []
   where
     s = Model.sender sm
     rm = Model.staticReceiverModel sm
 
-prop_Model_expectedDVars (SenderModelWithContext c sm) =
+prop_Model_expectedDVars (SenderModelWithHistory h sm) =
     (sort . filter ((/= 0) . snd)) (Model.expectedDVars rm)
         ~==
-        (sort . filter ((/= 0) . snd)) (Params.expectedDVars c s p)
+        (sort . filter ((/= 0) . snd)) (Params.expectedDVars h s p)
   where
     s = Model.sender sm
-    rm = Model.receiverModel c sm
+    rm = Model.receiverModel h sm
     p = Model.params sm
     dv = Params.dvars p
 
@@ -641,7 +641,7 @@ main :: IO ()
 main = defaultMain [ tests_SVars
                    , tests_Intervals
                    , tests_EventSet
-                   , tests_Context
+                   , tests_History
                    , tests_DVars
                    , tests_Summary
                    , tests_Model

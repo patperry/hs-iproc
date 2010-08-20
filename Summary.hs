@@ -15,7 +15,7 @@ import Data.Maybe( mapMaybe )
 import Numeric.LinearAlgebra
 
 import Actor
-import DVars( DVars, Context )
+import DVars( DVars, History )
 import qualified DVars as DVars
 import Intervals( IntervalId )
 import SVars( SVars )
@@ -36,7 +36,7 @@ data Summary =
             } deriving (Eq, Show)
 
 
-fromList :: SVars -> DVars -> [(Context, Message)] -> Summary
+fromList :: SVars -> DVars -> [(History, Message)] -> Summary
 fromList sv dv ms = let
     in foldl' (flip insert) (empty sv dv) ms
         
@@ -45,7 +45,7 @@ empty sv dv =
     let x0 = constantVector (SVars.dim sv) 0
     in Summary sv dv 0 Map.empty Map.empty Map.empty x0 Map.empty Map.empty
 
-singleton :: SVars -> DVars -> (Context, Message) -> Summary
+singleton :: SVars -> DVars -> (History, Message) -> Summary
 singleton sv dv = flip insert (empty sv dv)
 
 union :: Summary -> Summary -> Summary
@@ -67,7 +67,7 @@ union (Summary sv1 dv1 n1 l1 s1 r1 x1 si1 ri1)
                m
                (Map.toList m')
 
-insert :: (Context, Message) -> Summary -> Summary
+insert :: (History, Message) -> Summary -> Summary
 insert (c,m) (Summary sv dv n l s r x si ri) = let
     n' = n + 1
     l' = Map.insertWith' (+) (length ts) 1 l

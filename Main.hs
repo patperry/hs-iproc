@@ -13,7 +13,7 @@ import Numeric.LinearAlgebra
        
         
 import Actor
-import qualified Context as Context
+import qualified History as History
 import qualified DVars as DVars
 import Enron
 import Intervals( Intervals )
@@ -79,7 +79,7 @@ main = do
         t0 = if null tms then posixSecondsToUTCTime 0
                          else (fst . head) tms
         c0 = DVars.context t0 dv
-        cms = snd $ Context.accum c0 tms
+        cms = snd $ History.accum c0 tms
         --smry = Summary.fromList sv dv cms
         p = defaultParams sv dv
         (ll,rs) = mapAccumL (flip LogLik.insert) (LogLik.empty p) cms

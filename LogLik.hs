@@ -28,7 +28,7 @@ import Numeric.LinearAlgebra
 
 
 import Actor( ReceiverId, SenderId )
-import DVars( DVar(..), Context )
+import DVars( DVar(..), History )
 import qualified DVars as DVars
 import Intervals( IntervalId )
 import qualified Intervals as Intervals
@@ -94,8 +94,8 @@ data SenderLogLik =
 emptySLL :: SenderModel -> SenderLogLik
 emptySLL m = SenderLogLik m 0 0 Map.empty Map.empty 0 Map.empty
 
-singletonSLL :: SenderModel -> (Context, [ReceiverId]) -> SenderLogLik
-singletonSLL m (c,ts) = let
+singletonSLL :: SenderModel -> (History, [ReceiverId]) -> SenderLogLik
+singletonSLL m (h,ts) = let
     val = foldl' (+) 0 [ log (Model.prob rm t) | t <- ts ]
     sc = l
     rc = Map.fromList $ zip ts (repeat 1)
@@ -108,11 +108,11 @@ singletonSLL m (c,ts) = let
     in SenderLogLik m val sc rc obs swp rll
   where
     dv = Params.dvars $ Model.params m
-    rm = Model.receiverModel c m
+    rm = Model.receiverModel h m
     s = Model.sender m
     l = length ts
-    l' = realToFrac l
-    vs = concat [ DVars.lookupDyad c s t dv | t <- ts ]
+    l' = fromIntegral l
+    vs = concat [ DVars.lookupDyad h s t dv | t <- ts ]
       
       
 unionSLL :: SenderLogLik -> SenderLogLik -> SenderLogLik
@@ -127,9 +127,9 @@ unionSLL (SenderLogLik m1 val1 sc1 rc1 obs1 swp1 rll1)
                  (unionWith' unionRLL rll1 rll2)
 
 
-insertSLL :: (Context, [ReceiverId]) -> SenderLogLik -> (SenderLogLik, Double)
-insertSLL cts sll0 = let
-    sll1 = singletonSLL (model sll0) cts
+insertSLL :: (History, [ReceiverId]) -> SenderLogLik -> (SenderLogLik, Double)
+insertSLL hts sll0 = let
+    sll1 = singletonSLL (model sll0) hts
     sll = unionSLL sll0 sll1
     resid = -2 * value sll1
     in resid `seq` (sll, resid)
@@ -143,10 +143,10 @@ data LogLik =
 empty :: Params -> LogLik
 empty p = LogLik p Map.empty
 
-insert :: (Context, Message) -> LogLik -> (LogLik, Double)
-insert (c, (Message f ts)) (LogLik p sllm) = let
+insert :: (History, Message) -> LogLik -> (LogLik, Double)
+insert (h, (Message f ts)) (LogLik p sllm) = let
     sll0 = Map.findWithDefault (emptySLL $ Model.senderModel p f) f sllm
-    (sll,resid) = insertSLL (c,ts) sll0
+    (sll,resid) = insertSLL (h,ts) sll0
     sllm' = Map.insert f sll sllm
     in resid `seq` (LogLik p sllm', resid)
 
