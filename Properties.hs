@@ -115,14 +115,13 @@ instance Arbitrary UTCTime where
         n <- arbitrary :: Gen Int
         return $ posixSecondsToUTCTime $ fromIntegral n
 
-data EmptyHistory = EmptyHistory Intervals UTCTime
+data EmptyHistory = EmptyHistory UTCTime
     deriving (Eq, Show)
 
 instance Arbitrary EmptyHistory where
     arbitrary = do
-        iset <- arbitrary
         t0 <- arbitrary
-        return $ EmptyHistory iset t0
+        return $ EmptyHistory t0
 
 data UpdateHistory e = HistoryAdvanceBy NominalDiffTime
                      | HistoryInsert e
@@ -140,9 +139,9 @@ instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (UpdateHistory e) wh
 
 instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (History e) where
     arbitrary = do
-        (EmptyHistory iset t0) <- arbitrary
+        (EmptyHistory t0) <- arbitrary
         us <- arbitrary
-        return $ foldr updateHistory (History.empty iset t0) us
+        return $ foldr updateHistory (History.empty t0) us
 
 instance Arbitrary Message where
     arbitrary = do
@@ -403,19 +402,10 @@ prop_Intervals_lookup_beyond_last (NonEmptyIntervals iset) =
 
 
 tests_History = testGroup "History"
-    [ testProperty "pastEvents" prop_History_pastEvents
-    , testProperty "currentEvents . insert" prop_History_currentEvents_insert
+    [ testProperty "currentEvents . insert" prop_History_currentEvents_insert
     , testProperty "pastEvents . advanceBy" prop_History_pastEvents_advanceBy
     , testProperty "lookup . advanceBy . insert" prop_History_lookup_advanceBy_insert
     ]
-    
-prop_History_pastEvents h =
-    History.pastEvents h
-        == map (\(e,dt) -> (e, fromJust $ Intervals.lookup dt is))
-               (History.pastEventsWithTimes h)
-  where
-    is = History.intervals h
-    _ = h :: History Int
     
 prop_History_currentEvents_insert h e =
     (sort . History.currentEvents . History.insert e) h
@@ -424,25 +414,28 @@ prop_History_currentEvents_insert h e =
   where
     _ = h :: History Int
     
-prop_History_pastEvents_advanceBy h (NonNegative dt) =
-    sort ((History.pastEvents . History.advanceBy dt) h)
-        == 
-            (sort . nubBy ((==) `on` fst))
-                 (mapMaybe (\e -> (e,) `fmap` Intervals.lookup dt is)
-                           (History.currentEvents h)
+prop_History_pastEvents_advanceBy h (NonNegative dt)
+    | dt == 0 =
+        ((History.pastEvents . History.advanceBy dt) h)
+            `eq`
+            (History.pastEvents h)
+    | otherwise =
+        ((History.pastEvents . History.advanceBy dt) h)
+            `eq`
+            (nubBy ((==) `on` fst))
+                 (map (\e -> (e,dt)) (History.currentEvents h)
                   ++
-                  mapMaybe (\(e,t) -> ((e,) `fmap` Intervals.lookup (t+dt) is))
-                           (History.pastEventsWithTimes h)
+                  map (\(e,t) -> (e,t+dt)) (History.pastEvents h)
                  )
   where
-    is = History.intervals h
+    eq xs ys = sort xs == sort ys
     _ = h :: History Int
     
 prop_History_lookup_advanceBy_insert h e (NonNegative dt) =
     (History.lookup e
      . History.advanceBy dt'
      . History.insert e) h
-        == Intervals.lookup dt' (History.intervals h)
+        == Just dt'
   where
     dt' = succ dt
     _ = e :: Int
@@ -616,7 +609,7 @@ prop_Model_expectedSVars_static (SenderModelWithContext _ sm) =
     Model.expectedSVars rm
         ~==
         foldl' (flip $ \(r,w) ->
-                    addVectorWithScale w (SVars.lookupDyad s r sv) 1)
+                    addVectorWithScales w (SVars.lookupDyad s r sv) 1)
                (constantVector (SVars.dim sv) 0)
                (Model.probs rm)
   where
