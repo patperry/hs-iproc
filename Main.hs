@@ -78,8 +78,8 @@ main = do
         dv = DVars.fromIntervals sendIntervals receiveIntervals 
         t0 = if null tms then posixSecondsToUTCTime 0
                          else (fst . head) tms
-        c0 = DVars.context t0 dv
-        cms = snd $ History.accum c0 tms
+        h0 = DVars.history t0 dv
+        cms = snd $ History.accum h0 tms
         --smry = Summary.fromList sv dv cms
         p = defaultParams sv dv
         (ll,rs) = mapAccumL (flip LogLik.insert) (LogLik.empty p) cms

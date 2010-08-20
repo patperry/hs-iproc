@@ -7,7 +7,7 @@ module DVars (
     index,
     
     History,
-    context,
+    history,
     lookupDyad,
     lookupSender,
     
@@ -58,8 +58,8 @@ receive dvar = case dvar of
     Send _ -> Nothing
     Receive i' -> Just i'
     
-context :: UTCTime -> DVars -> History
-context t0 (DVars sint rint) = History.empty t0
+history :: UTCTime -> DVars -> History
+history t0 (DVars sint rint) = History.empty t0
 
 lookupSender :: History -> SenderId -> DVars -> [(ReceiverId, [DVar])]
 lookupSender c s (DVars sint rint) =

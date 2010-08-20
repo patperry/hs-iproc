@@ -184,11 +184,11 @@ history is js t0 dv = do
     ms <- replicateM n $ message is js
     
     let ts = map (`addUTCTime` t0) dts
-        c0 = DVars.context (minimum (t0:ts)) dv
-        c = fst $ History.accum c0 $ zip ts ms
-        c' = History.advanceTo t0 c
+        h0 = DVars.history (minimum (t0:ts)) dv
+        h = fst $ History.accum h0 $ zip ts ms
+        h' = History.advanceTo t0 h
     
-    return $ c'
+    return h'
 
 data DVarsWithHistory = DVarsWithHistory History DVars deriving (Show)
 instance Arbitrary DVarsWithHistory where
