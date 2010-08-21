@@ -19,6 +19,7 @@ module Model (
     logWeights,
     logWeightChanges,
     sumWeights,
+    logSumWeights,
 
     prob,
     probs,
@@ -82,6 +83,9 @@ logWeightChange m h s r | not (validDyad m s r) = 0
 sumWeights :: Model -> History -> SenderId -> Double
 sumWeights m h s =
     foldl' (+) 0 $ (snd . unzip) (weights m h s)
+
+logSumWeights :: Model -> History -> SenderId -> Double
+logSumWeights m h s = log $ sumWeights m h s
 
 weights :: Model -> History -> SenderId -> [(ReceiverId, Double)]
 weights m h s = [ (r, exp lw) | (r,lw) <- logWeights m h s ]
