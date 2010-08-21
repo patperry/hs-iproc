@@ -10,12 +10,15 @@ module Vars (
     dyad,
     dyadChanges,
     mulDyadBy,
+    mulDyadChangesBy,
 
     sender,
     senderChanges,
     mulSenderBy,
+    mulSenderChangesBy,
     ) where
 
+import Control.Monad( forM_ )
 import Data.List( foldl' )
 import Data.Map( Map )
 import qualified Data.Map as Map
@@ -85,27 +88,43 @@ senders v = Map.keys (senderIxMap v)
 receivers :: Vars -> [ReceiverId]
 receivers v = Map.keys (receiverIxMap v)
 
+senderCount :: Vars -> Int
+senderCount = (snd . dimMatrix . senderMatrix)
+
+receiverCount :: Vars -> Int
+receiverCount = (snd . dimMatrix . receiverMatrix)
+
 mulSenderBy :: Vector Double -> Vars -> History -> SenderId -> [(ReceiverId, Double)]
 mulSenderBy beta v h s
     | dimVector beta /= dim v = error "dimension mismatch"
     | otherwise = let
-        (beta0, beta1) = splitVectorAt (dynamicDim v) beta
+        beta1 = dropVector (dynamicDim v) beta
         beta1_mat = matrixViewVector (staticMatrixDim v) beta1
         
         x = colMatrix (senderMatrix v) (senderIndex s v)
         xt_beta1 = mulMatrixVector Trans beta1_mat x
-        z0s = mulMatrixVector Trans (receiverMatrix v) xt_beta1
-        
-        in [ (r, foldl' (+) z0 [ d * atVector beta0 i | (i,d) <- delta r ])
-           | (r,z0) <- zip (receivers v) (elemsVector z0s) ]
-  where
-    delta = dyadChanges v h s
+        z = runVector $ do
+                 mz <- newVector_ (receiverCount v)
+                 mulMatrixToVector Trans (receiverMatrix v) xt_beta1 mz
+                 forM_ (mulSenderChangesBy beta v h s) $ \(r,z1) ->
+                     unsafeModifyVector mz (receiverIndex r v) (z1+)
+                 return mz
+        in zip (receivers v) (elemsVector z)
+
+mulSenderChangesBy :: Vector Double -> Vars -> History -> SenderId -> [(ReceiverId, Double)]
+mulSenderChangesBy  beta v h s
+    | dimVector beta /= dim v = error "dimension mismatch"
+    | otherwise = let
+        beta0 = takeVector (dynamicDim v) beta
+        in [ (r, foldl' (+) 0 [ d * atVector beta0 i | (i,d) <- delta ])
+           | (r, delta) <- senderChanges v h s
+           ]
 
 mulDyadBy :: Vector Double -> Vars -> History -> SenderId -> ReceiverId -> Double
 mulDyadBy beta v h s r
     | dimVector beta /= dim v = error "dimension mismatch"
     | otherwise = let
-        (beta0, beta1) = splitVectorAt (dynamicDim v) beta
+        beta1 = dropVector (dynamicDim v) beta
         beta1_mat = matrixViewVector (staticMatrixDim v) beta1
         
         x = colMatrix (senderMatrix v) (senderIndex s v)
@@ -113,7 +132,14 @@ mulDyadBy beta v h s r
         xt_beta1 = mulMatrixVector Trans beta1_mat x
         z0 = dotVector y xt_beta1
 
-        in foldl' (+) z0 [ d * atVector beta0 i | (i,d) <- delta s r ]
+        in z0 + mulDyadChangesBy beta v h s r
+
+mulDyadChangesBy :: Vector Double -> Vars -> History -> SenderId -> ReceiverId -> Double
+mulDyadChangesBy beta v h s r
+    | dimVector beta /= dim v = error "dimension mismatch"
+    | otherwise = let
+        beta0 = takeVector (dynamicDim v) beta
+        in foldl' (+) 0 [ d * atVector beta0 i | (i,d) <- delta s r ]
   where
     delta = dyadChanges v h
 
@@ -121,7 +147,7 @@ senderChanges :: Vars -> History -> SenderId -> [(ReceiverId, [(Int,Double)])]
 -- senderChanges v h s = [ (r, dyadChanges v h s r) | r <- receivers v ]
 senderChanges v h s | History.null h = []
                     | otherwise =
-    Map.toList $ Map.unionsWith (++) $ map (Map.fromList . catMaybes)
+    Map.assocs $ Map.unionsWith (++) $ map (Map.fromList . catMaybes)
         [ [ case Intervals.lookup dt sint of
                 Nothing -> Nothing
                 Just i  -> Just (r, [send i])

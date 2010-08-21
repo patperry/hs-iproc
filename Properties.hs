@@ -35,15 +35,6 @@ import qualified Intervals as Intervals
 
 import Message
 
-import Model( SenderModel, ReceiverModel )
-import qualified Model as Model
-
-import Params( Params )
-import qualified Params as Params
-
-import Summary( Summary )
-import qualified Summary as Summary
-
 import Vars( Vars )
 import qualified Vars as Vars
 
