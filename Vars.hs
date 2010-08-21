@@ -144,7 +144,7 @@ mulDyadChangesBy beta v h s r
     delta = dyadChanges v h
 
 senderChanges :: Vars -> History -> SenderId -> [(ReceiverId, [(Int,Double)])]
--- senderChanges v h s = [ (r, dyadChanges v h s r) | r <- receivers v ]
+-- senderChanges v h s = filter (not . null . snd) [ (r, dyadChanges v h s r) | r <- receivers v ]
 senderChanges v h s | History.null h = []
                     | otherwise =
     Map.assocs $ Map.unionsWith (++) $ map (Map.fromList . catMaybes)
