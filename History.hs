@@ -37,7 +37,7 @@ data History =
     deriving (Eq, Show)
 
 null :: History -> Bool
-null (History _ sm rm) = Map.null sm && Map.null rm
+null (History t sm rm) = t == 0 || (Map.null sm && Map.null rm)
     
 empty :: History
 empty = History 0 Map.empty Map.empty
