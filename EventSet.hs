@@ -1,5 +1,6 @@
 module EventSet (
-    EventSet( currentTime ),
+    EventSet,
+    currentTime,
     null,
     empty,
     insert,
