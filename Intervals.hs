@@ -7,6 +7,7 @@ module Intervals (
     lookup,
     assocs,
     
+    empty,
     fromList,
     toList,
     ) where
@@ -19,6 +20,9 @@ import Data.Time
 
 type IntervalId = Int
 data Intervals = Intervals !Int ![NominalDiffTime] deriving (Eq)
+
+empty :: Intervals
+empty = fromList []
 
 fromList :: [NominalDiffTime] -> Intervals
 fromList ts | sort ts /= ts = error "time interval list is not sorted"
