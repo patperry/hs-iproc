@@ -16,6 +16,9 @@ module Vars (
     senderChanges,
     mulSenderBy,
     mulSenderChangesBy,
+    
+    weightReceiverBy,
+    weightReceiverChangesBy,
     ) where
 
 import Control.Monad( forM_ )
@@ -93,6 +96,38 @@ senderCount = (snd . dimMatrix . senderMatrix)
 
 receiverCount :: Vars -> Int
 receiverCount = (snd . dimMatrix . receiverMatrix)
+
+weightReceiverBy :: [(ReceiverId, Double)] -> Vars -> History -> SenderId -> Vector Double
+weightReceiverBy rws v h s = let
+    w = runVector $ do
+            mw <- newVector (receiverCount v) 0
+            forM_ rws $ \(r,wt) ->
+                modifyVector mw (receiverIndex r v) (wt+)
+            return mw
+    y = mulMatrixVector NoTrans (receiverMatrix v) w
+    x = colMatrix (senderMatrix v) (senderIndex s v)
+    in concatVectors 
+           [ accumVector (+) (constantVector (dynamicDim v) 0) $
+                 [ (i, atVector w (receiverIndex r v) * d)
+                 | (r, ds) <- senderChanges v h s
+                 , (i, d) <- ds
+                 ]
+           , kroneckerVector y x
+           ]
+
+weightReceiverChangesBy :: [(ReceiverId, Double)] -> Vars -> History -> SenderId -> [(Int, Double)]
+weightReceiverChangesBy rws v h s = let
+    w = runVector $ do
+            mw <- newVector (receiverCount v) 0
+            forM_ rws $ \(r,wt) ->
+                modifyVector mw (receiverIndex r v) (wt+)
+            return mw
+    in filter ((/= 0) . snd) $ assocsVector $ 
+           accumVector (+) (constantVector (dynamicDim v) 0) $
+               [ (i, atVector w (receiverIndex r v) * d)
+               | (r, ds) <- senderChanges v h s
+               , (i, d) <- ds
+               ]
 
 mulSenderBy :: Vector Double -> Vars -> History -> SenderId -> [(ReceiverId, Double)]
 mulSenderBy beta v h s
@@ -192,9 +227,9 @@ sender v h s = [ (r, dyad v h s r) | r <- receivers v ]
 
 dyad :: Vars -> History -> SenderId -> ReceiverId -> Vector Double
 dyad v h s r = let
-    sx = colMatrix (senderMatrix v) (senderIndex s v)
-    rx = colMatrix (receiverMatrix v) (receiverIndex r v)
+    x = colMatrix (senderMatrix v) (senderIndex s v)
+    y = colMatrix (receiverMatrix v) (receiverIndex r v)
     delta = dyadChanges v h s r
     in concatVectors [ accumVector (+) (constantVector (dynamicDim v) 0) delta
-                     , kroneckerVector rx sx
+                     , kroneckerVector y x
                      ]

@@ -381,6 +381,8 @@ tests_Vars = testGroup "Vars"
     , testProperty "sender" prop_Vars_sender
     , testProperty "mulDyadBy" prop_Vars_mulDyadBy
     , testProperty "mulSenderBy" prop_Vars_mulSenderBy
+    , testProperty "weightReceiverBy" prop_Vars_weightReceiverBy
+    , testProperty "weightReceiverChangesBy" prop_Vars_weightReceiverChangesBy
     ]
 
 prop_Vars_senders_fromActors (ActorsWithVectors sxs rys) sint rint =
@@ -487,6 +489,31 @@ prop_Vars_mulSenderBy (VarsWithHistory v h) =
             | s <- Vars.senders v
             ]
 
+prop_Vars_weightReceiverBy (VarsWithHistory v h) =
+    forAll (sized $ \s -> do
+                k <- choose (0,s)
+                rs <- replicateM k (elements $ Vars.receivers v)
+                ws <- replicateM k arbitrary
+                return $ zip rs ws) $ \rws ->
+    flip all (Vars.senders v) $ \s ->
+        Vars.weightReceiverBy rws v h s
+            `verboseAEq`
+            weightedSumVector (Vars.dim v)
+                [ (w, Vars.dyad v h s r) | (r,w) <- rws ]
+
+prop_Vars_weightReceiverChangesBy (VarsWithHistory v h) =
+    forAll (sized $ \s -> do
+                k <- choose (0,s)
+                rs <- replicateM k (elements $ Vars.receivers v)
+                ws <- replicateM k arbitrary
+                return $ zip rs ws) $ \rws ->
+    flip all (Vars.senders v) $ \s ->
+    flip all (assocsVector $ Vars.weightReceiverBy rws v h s) $ \(i,d) ->
+        let x0 = Vars.weightReceiverBy rws v History.empty s
+        in case (lookup i (Vars.weightReceiverChangesBy rws v h s)) of
+              Just d' -> d ~== d' + atVector x0 i
+              Nothing -> d ~== atVector x0 i
+
 tests_Model = testGroup "Model"
     [ testProperty "logWeight (static)" prop_Model_logWeight_static
     , testProperty "logWeight" prop_Model_logWeight
@@ -497,6 +524,8 @@ tests_Model = testGroup "Model"
     , testProperty "weights" prop_Model_weights
     , testProperty "sumWeights (static)" prop_Model_sumWeights_static
     , testProperty "sumWeights" prop_Model_sumWeights    
+    , testProperty "logSumWeights (static)" prop_Model_logSumWeights_static
+    , testProperty "logSumWeights" prop_Model_logSumWeights    
     , testProperty "probs (static)" prop_Model_probs_static
     , testProperty "probs" prop_Model_probs
     , testProperty "sum . probs (static)" prop_Model_sum_probs_static
@@ -594,6 +623,18 @@ prop_Model_sumWeights (ModelWithHistory m h) =
     and [ Model.sumWeights m h s ~== (sum . snd . unzip) (Model.weights m h s)
         | s <- Model.senders m
         ]
+
+prop_Model_logSumWeights_static m =
+    flip all (Model.senders m) $ \s ->
+        Model.logSumWeights m h s
+            ~== log (Model.sumWeights m h s)
+  where
+    h = History.empty
+
+prop_Model_logSumWeights (ModelWithHistory m h) =
+    flip all (Model.senders m) $ \s ->
+        Model.logSumWeights m h s
+            ~== log (Model.sumWeights m h s)
 
 prop_Model_probs_static m =
     and [ and [ Model.prob m History.empty s r
