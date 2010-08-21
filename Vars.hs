@@ -1,7 +1,9 @@
 module Vars (
     Vars,
-    vars,
+    fromActors,
     dim,
+    sendIntervals,
+    receiveIntervals,
     senders,
     receivers,
 
@@ -11,12 +13,14 @@ module Vars (
 
     sender,
     senderChanges,
-    mulSenderBy
+    mulSenderBy,
     ) where
-        
+
 import Data.List( foldl' )
 import Data.Map( Map )
 import qualified Data.Map as Map
+import Data.Set( Set )
+import qualified Data.Set as Set
 import Data.Maybe( catMaybes, maybeToList )
 import Numeric.LinearAlgebra
 
@@ -32,6 +36,7 @@ data Vars =
     Vars { dim :: !Int
          , senderIxMap :: !(Map SenderId Int)
          , receiverIxMap :: !(Map ReceiverId Int)
+         , receiverSet :: !(Set ReceiverId)
          , senderMatrix :: !(Matrix Double)
          , receiverMatrix :: !(Matrix Double)
          , sendIntervals :: !Intervals
@@ -40,17 +45,18 @@ data Vars =
          , staticMatrixDim :: !(Int, Int)
          } deriving (Eq, Show)
           
-vars :: Map SenderId (Vector Double)
-     -> Map ReceiverId (Vector Double)
-     -> Intervals
-     -> Intervals
-     -> Vars
-vars sm rm sint rint
+fromActors :: Map SenderId (Vector Double)
+           -> Map ReceiverId (Vector Double)
+           -> Intervals
+           -> Intervals
+           -> Vars
+fromActors sm rm sint rint
     | Map.null sm = error "no senders"
     | Map.null rm = error "no receivers"
     | otherwise = let
         sim = Map.fromAscList $ zip (Map.keys sm) [ 0.. ]
         rim = Map.fromAscList $ zip (Map.keys rm) [ 0.. ]
+        rs = Map.keysSet rim
         ssd = (dimVector . snd . Map.findMin) sm
         srd = (dimVector . snd . Map.findMin) rm
         smat = colListMatrix (ssd, Map.size sm) $ Map.elems sm
@@ -58,7 +64,7 @@ vars sm rm sint rint
         dd = Intervals.size sint + Intervals.size rint
         smd = (ssd, srd)
         d = dd + ssd * srd
-        in Vars d sim rim smat rmat sint rint dd smd
+        in Vars d sim rim rs smat rmat sint rint dd smd
         
 
 senderIndex :: SenderId -> Vars -> Int
@@ -86,15 +92,14 @@ mulSenderBy beta v h s
         (beta0, beta1) = splitVectorAt (dynamicDim v) beta
         beta1_mat = matrixViewVector (staticMatrixDim v) beta1
         
-        sx = colMatrix (senderMatrix v) (senderIndex s v)
-        sx_beta1 = mulMatrixVector Trans beta1_mat sx
-        y0s = mulMatrixVector Trans (receiverMatrix v) sx_beta1
+        x = colMatrix (senderMatrix v) (senderIndex s v)
+        xt_beta1 = mulMatrixVector Trans beta1_mat x
+        z0s = mulMatrixVector Trans (receiverMatrix v) xt_beta1
         
-        in [ (r, foldl' (+) y0 [ d * atVector beta0 i | (i,d) <- delta r ])
-           | (r,y0) <- zip (receivers v) (elemsVector y0s) ]
+        in [ (r, foldl' (+) z0 [ d * atVector beta0 i | (i,d) <- delta r ])
+           | (r,z0) <- zip (receivers v) (elemsVector z0s) ]
   where
     delta = dyadChanges v h s
-
 
 mulDyadBy :: Vector Double -> Vars -> History -> SenderId -> ReceiverId -> Double
 mulDyadBy beta v h s r
@@ -103,12 +108,12 @@ mulDyadBy beta v h s r
         (beta0, beta1) = splitVectorAt (dynamicDim v) beta
         beta1_mat = matrixViewVector (staticMatrixDim v) beta1
         
-        sx = colMatrix (senderMatrix v) (senderIndex s v)
-        rx = colMatrix (receiverMatrix v) (receiverIndex s v)
-        sx_beta1 = mulMatrixVector Trans beta1_mat sx
-        y0 = dotVector rx sx_beta1
-    
-        in foldl' (+) y0 [ d * atVector beta0 i | (i,d) <- delta s r ]
+        x = colMatrix (senderMatrix v) (senderIndex s v)
+        y = colMatrix (receiverMatrix v) (receiverIndex r v)
+        xt_beta1 = mulMatrixVector Trans beta1_mat x
+        z0 = dotVector y xt_beta1
+
+        in foldl' (+) z0 [ d * atVector beta0 i | (i,d) <- delta s r ]
   where
     delta = dyadChanges v h
 
@@ -126,9 +131,11 @@ senderChanges v h s | History.null h = []
                 Nothing -> Nothing
                 Just i' -> Just (r, [receive i'])
           | (r,dt') <- EventSet.past $ History.lookupReceiver s h
+          , Set.member r rset 
           ]
         ]
   where
+    rset = receiverSet v
     sint = sendIntervals v
     rint = receiveIntervals v
     send    i  = (i, 1)
@@ -137,13 +144,13 @@ senderChanges v h s | History.null h = []
 
 dyadChanges :: Vars -> History -> SenderId -> ReceiverId -> [(Int,Double)]
 dyadChanges v h s r | History.null h = []
-                    | otherwise = concatMap maybeToList
+                    | otherwise = catMaybes
     [ do
           dt <- EventSet.lookup r $ History.lookupSender s h
           i <- Intervals.lookup dt sint
           return $ send i
     , do
-          dt' <- EventSet.lookup r $ History.lookupReceiver s h
+          dt' <- EventSet.lookup s $ History.lookupSender r h
           i' <- Intervals.lookup dt' rint
           return $ receive i'
     ]
@@ -160,8 +167,8 @@ sender v h s = [ (r, dyad v h s r) | r <- receivers v ]
 dyad :: Vars -> History -> SenderId -> ReceiverId -> Vector Double
 dyad v h s r = let
     sx = colMatrix (senderMatrix v) (senderIndex s v)
-    rx = colMatrix (receiverMatrix v) (receiverIndex s v)
-    delta = dyadChanges v h r s
+    rx = colMatrix (receiverMatrix v) (receiverIndex r v)
+    delta = dyadChanges v h s r
     in concatVectors [ accumVector (+) (constantVector (dynamicDim v) 0) delta
                      , kroneckerVector rx sx
                      ]

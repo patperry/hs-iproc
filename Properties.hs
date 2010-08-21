@@ -27,13 +27,10 @@ import Actor( Actor(..), ActorId, SenderId, ReceiverId )
 import History( History )
 import qualified History as History
 
-import DVars( DVars, DVar(..) )
-import qualified DVars as DVars
-
 import EventSet( EventSet )
 import qualified EventSet as EventSet
 
-import Intervals(Intervals, IntervalId )
+import Intervals(Intervals )
 import qualified Intervals as Intervals
 
 import Message
@@ -47,77 +44,54 @@ import qualified Params as Params
 import Summary( Summary )
 import qualified Summary as Summary
 
-import SVars( SVars )
-import qualified SVars as SVars
+import Vars( Vars )
+import qualified Vars as Vars
 
-instance AEq DVar where
-    (~==) = (==)
-    (===) = (==)
-
-actor :: Int -> Gen Actor
-actor p = do
-    x <- listVector p `fmap` replicateM p (choose (-1,1))
-    return $ Actor x
-
-instance Arbitrary Actor where
+-- | Times are in [Jan 1, 1970, Feb 1, 1970)
+instance Arbitrary UTCTime where
     arbitrary = do
-        p <-  choose (0,5)
-        actor p
+        n <- choose (0, 31 * 24 * 3600 - 1) :: Gen Int
+        return $ posixSecondsToUTCTime $ fromIntegral n
 
-actorMap :: Int -> Gen (Map ActorId Actor)
-actorMap p = do
-    i <- arbitrary
-    is <- (i:) `fmap` arbitrary
-    xs <- replicateM (length is) (actor p)
-    return $ Map.fromList $ zip is xs
-
-data ActorIdList = ActorIdList [ActorId] deriving (Eq, Show)
-instance Arbitrary ActorIdList where
-    arbitrary = do
-        l <- choose (1,5)
-        (ActorIdList . nub) `fmap` replicateM l arbitrary
-    
-instance Arbitrary (Map ActorId Actor) where
-    arbitrary = do
-        p <- choose (0,5)
-        actorMap p
-
+-- | DiffTimes are between 0 secs and 1 week
 instance Arbitrary NominalDiffTime where
     arbitrary = do
-        x <- arbitrary :: Gen Integer
-        return $ fromIntegral x
+        secs <- oneof [ choose (0, 7 * 24 * 3600)
+                      , choose (0, 24 * 3600)
+                      , choose (0, 3600)
+                      , choose (0, 60)
+                      ] :: Gen Int
+        return $ fromIntegral secs
 
+-- | Intervals are between 1 sec and ~6 days
 data IntervalList = IntervalList [NominalDiffTime] deriving (Show)
 instance Arbitrary IntervalList where
     arbitrary = do
-        ts <- arbitrary
-        return $ IntervalList $ nub $ sort $ filter (> 0) ts
+        l <- choose (1,5)
+        ts <- replicateM l $ elements $ map (fromIntegral . (2^)) [ 0..19 ]
+        return $ IntervalList $ nub $ sort ts
+
+data NonEmptyIntervalList = NonEmptyIntervalList [NominalDiffTime] deriving (Show)
+instance Arbitrary NonEmptyIntervalList where
+    arbitrary = do
+        t <- (succ . abs) `fmap` arbitrary
+        (IntervalList ts) <- arbitrary
+        return $ NonEmptyIntervalList $ nub $ sort (t:ts)
 
 instance Arbitrary Intervals where
     arbitrary = do
         (IntervalList ts) <- arbitrary
         return $ Intervals.fromList ts
 
-newtype EmptyIntervals = EmptyIntervals Intervals deriving (Eq,Show)
-instance Arbitrary EmptyIntervals where
-    arbitrary = return $ EmptyIntervals $ Intervals.fromList []
-
-newtype NonEmptyIntervals = NonEmptyIntervals Intervals deriving (Eq,Show)
+data NonEmptyIntervals = NonEmptyIntervals Intervals deriving (Show)
 instance Arbitrary NonEmptyIntervals where
     arbitrary = do
-        t <- arbitrary
-        (IntervalList ts) <- arbitrary
-        return $ NonEmptyIntervals $
-            Intervals.fromList $ nub $ sort $ (abs t + 1):ts
-
-instance Arbitrary UTCTime where
-    arbitrary = do
-        n <- arbitrary :: Gen Int
-        return $ posixSecondsToUTCTime $ fromIntegral n
+        (NonEmptyIntervalList ts) <- arbitrary
+        return $ NonEmptyIntervals $ Intervals.fromList ts
 
 data UpdateEventSet e = EventSetAdvanceBy NominalDiffTime
-                     | EventSetInsert e
-    deriving (Eq, Show)
+                      | EventSetInsert e
+    deriving (Show)
     
 updateEventSet :: (Ord e) => UpdateEventSet e -> EventSet e -> EventSet e
 updateEventSet (EventSetAdvanceBy dt) = EventSet.advanceBy dt
@@ -135,45 +109,366 @@ instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (EventSet e) where
         us <- arbitrary
         return $ foldr updateEventSet (EventSet.empty t0) us
 
-instance Arbitrary Message where
+-- | A list of actors ids (at least two, to avoid self-loop problems)
+data ActorIds = ActorIds [ActorId] deriving (Show)
+instance Arbitrary ActorIds where
     arbitrary = do
-        (ActorIdList ss) <- arbitrary
-        (ActorIdList rs) <- arbitrary
-        message ss rs
+        i1 <- arbitrary
+        i2 <- arbitrary >>= \d -> return $ if d == 0 then i1 + 1 else i1 + d
+        l <- choose (0,3)
+        is <- replicateM l arbitrary
+        return $ ActorIds $ nub $ i1:i2:is
 
-message :: [SenderId] -> [ReceiverId] -> Gen Message
-message ss rs = do
-    f <- elements ss
-    l <- frequency [ (16, return 1)
-                   , (8, return 2)
-                   , (4, return 3)
-                   , (2, return 4)
-                   , (1, return 5)
-                   ]
-    ts <- fmap nub $ replicateM l $ elements rs
-    return $ Message f ts
-
-svars :: [SenderId] -> [ReceiverId] -> Gen SVars
-svars is js = do
-        p <- choose (0,5)
-        q <- choose (0,5)
-        ss <- replicateM (length is) (actor p)
-        rs <- replicateM (length js) (actor q)
-        return $ SVars.fromActors (Map.fromList $ zip is ss)
-                                  (Map.fromList $ zip js rs)
-
-instance Arbitrary SVars where
+data Actors = Actors [SenderId] [ReceiverId] deriving (Show)
+instance Arbitrary Actors where
     arbitrary = do
-        (ActorIdList ss) <- arbitrary
-        (ActorIdList rs) <- arbitrary
-        svars ss rs
+        (ActorIds ids) <- arbitrary
+        rsize <- choose (2, length ids)
+        ssize <- choose (1, length ids)
+        let ss = take ssize ids
+            rs = drop (length ids - rsize) ids
+        return $ Actors ss rs
 
-instance Arbitrary DVars where
+data ActorsWithVectors = ActorsWithVectors (Map SenderId (Vector Double))
+                                           (Map ReceiverId (Vector Double))
+    deriving (Show)
+instance Arbitrary ActorsWithVectors where
     arbitrary = do
+        (Actors ss rs) <- arbitrary
+        p <- choose (0,3)
+        q <- choose (0,3)
+        xs <- replicateM (length ss) $ Test.vector p
+        ys <- replicateM (length rs) $ Test.vector q
+        return $ ActorsWithVectors (Map.fromList $ zip ss xs)
+                                   (Map.fromList $ zip rs ys)
+
+history :: Actors -> Gen History
+history as = do
+    ms <- messages as
+    t0 <- arbitrary
+    ts <- (sort . map (`addUTCTime` t0)) `fmap` replicateM (length ms) arbitrary
+    let (h,_) = History.accum (History.empty t0) $ zip ts ms
+    return h
+
+instance Arbitrary History where
+    arbitrary = do
+        as <- arbitrary
+        history as
+
+data VarsWithHistory = VarsWithHistory Vars History deriving (Show)
+instance Arbitrary VarsWithHistory where
+    arbitrary = do
+        (ActorsWithVectors sxs rys) <- arbitrary
         sint <- arbitrary
         rint <- arbitrary
-        return $ DVars.fromIntervals sint rint
-        
+        h <- history (Actors (Map.keys sxs) (Map.keys rys))
+        return $ VarsWithHistory (Vars.fromActors sxs rys sint rint) h
+
+message :: Actors -> Gen Message
+message = messageWithLoop True
+    
+messageWithLoop :: Bool -> Actors -> Gen Message
+messageWithLoop loop (Actors ss rs) = do
+    f <- elements ss
+    let rs' = if loop then rs else filter (/= f) rs
+    l <- choose (1, length rs')
+    ts <- nub `fmap` replicateM l (elements rs')
+    return $ Message f ts
+
+messages :: Actors -> Gen [Message]
+messages = messagesWithLoops True
+    
+messagesWithLoops :: Bool -> Actors -> Gen [Message]
+messagesWithLoops loops as = sized $ \n -> do
+    k <- choose (0,n)
+    replicateM k $ messageWithLoop loops as
+
+data MessageWithHistory = MessageWithHistory History Message deriving Show
+instance Arbitrary MessageWithHistory where
+    arbitrary = do
+        as <- arbitrary
+        m  <- message as
+        h <- history as
+        return $ MessageWithHistory h m
+
+
+tests_Intervals = testGroup "Intervals"
+    [ testProperty "size . fromList" prop_Intervals_size_fromList
+    , testProperty "at . fromList" prop_Intervals_at_fromList
+    , testProperty "assocs . fromList" prop_Intervals_assocs_fromList     
+    , testProperty "toList . fromList" prop_Intervals_toList_fromList 
+    , testProperty "fromList . toList" prop_Intervals_fromList_toList
+    , testProperty "lookup (empty)" prop_Intervals_lookup_empty
+    , testProperty "lookup (nonpositive)" prop_Intervals_lookup_nonpos
+    , testProperty "lookup (endpoint)" prop_Intervals_lookup_endpoint
+    , testProperty "lookup (before endpoint)" prop_Intervals_lookup_before_endpoint    
+    , testProperty "lookup (after endpoint)" prop_Intervals_lookup_after_endpoint        
+    , testProperty "lookkup (beyond last)" prop_Intervals_lookup_beyond_last
+    ]
+
+prop_Intervals_size_fromList (IntervalList ts) =
+    (Intervals.size . Intervals.fromList) ts == length ts
+    
+prop_Intervals_at_fromList (IntervalList ts) = let
+    int = Intervals.fromList ts
+    in and [ Intervals.at i int == t | (i,t) <- zip [ 0.. ] ts ]
+
+prop_Intervals_assocs_fromList (IntervalList ts) =
+    (Intervals.assocs . Intervals.fromList) ts == zip [ 0.. ] ts
+
+prop_Intervals_toList_fromList (IntervalList ts) =
+    (Intervals.toList . Intervals.fromList) ts == ts
+    
+prop_Intervals_fromList_toList int =
+    (Intervals.fromList . Intervals.toList) int == int
+    
+prop_Intervals_lookup_empty t =
+    Intervals.lookup t Intervals.empty == Nothing
+
+prop_Intervals_lookup_nonpos (NonNegative t) int =
+    Intervals.lookup (negate t) int == Nothing
+    
+prop_Intervals_lookup_endpoint (NonEmptyIntervals int) = let
+    in forAll (choose (0,n-1)) $ \i -> let
+           t = Intervals.at i int
+           in Intervals.lookup t int == Just i
+  where
+    n = Intervals.size int
+
+prop_Intervals_lookup_before_endpoint (NonEmptyIntervals int) =
+    forAll (choose (0,n-1)) $ \i -> let
+        t_begin = if i == 0 then 0 else Intervals.at (i-1) int
+        t_end = Intervals.at i int
+        t = pred t_end
+        in Intervals.lookup t int ==
+            if t == 0 then Nothing
+                      else if t == t_begin then Just (i-1)
+                                           else Just i
+  where
+    n = Intervals.size int
+
+prop_Intervals_lookup_after_endpoint (NonEmptyIntervals int) =
+    forAll (choose (0,n-1)) $ \i -> let
+        t_begin = if i == 0 then 0 else Intervals.at (i-1) int
+        t = succ t_begin
+        in Intervals.lookup t int == Just i
+  where
+    n = Intervals.size int
+
+prop_Intervals_lookup_beyond_last (NonEmptyIntervals int) =
+    Intervals.lookup (succ tlast) int == Nothing
+  where
+    n = Intervals.size int
+    tlast = Intervals.at (n - 1) int
+
+
+tests_EventSet = testGroup "EventSet"
+    [ testProperty "current . insert" prop_EventSet_current_insert
+    , testProperty "past . advanceBy" prop_EventSet_past_advanceBy
+    , testProperty "lookup . advanceBy . insert" prop_EventSet_lookup_advanceBy_insert
+    ]
+    
+prop_EventSet_current_insert h e =
+    (sort . EventSet.current . EventSet.insert e) h
+    ==
+    (sort . nub . (e:) . EventSet.current) h
+  where
+    _ = h :: EventSet Int
+    
+prop_EventSet_past_advanceBy h (NonNegative dt)
+    | dt == 0 =
+        ((EventSet.past . EventSet.advanceBy dt) h)
+            `eq`
+            (EventSet.past h)
+    | otherwise =
+        ((EventSet.past . EventSet.advanceBy dt) h)
+            `eq`
+            (nubBy ((==) `on` fst))
+                 (map (\e -> (e,dt)) (EventSet.current h)
+                  ++
+                  map (\(e,t) -> (e,t+dt)) (EventSet.past h)
+                 )
+  where
+    eq xs ys = sort xs == sort ys
+    _ = h :: EventSet Int
+    
+prop_EventSet_lookup_advanceBy_insert h e (NonNegative dt) =
+    (EventSet.lookup e
+     . EventSet.advanceBy dt'
+     . EventSet.insert e) h
+        == Just dt'
+  where
+    dt' = succ dt
+    _ = e :: Int
+
+
+tests_History = testGroup "History"
+    [ testProperty "lookupSender/insert" prop_History_lookupSender_insert
+    , testProperty "lookupReceiver/insert" prop_History_lookupReceiver_insert
+    , testProperty "lookupSender/lookupReceiver" prop_History_lookupSender_lookupReceiever
+    , testProperty "lookupReceiver/lookupSender" prop_History_lookupReceiver_lookupSender
+    ]
+
+prop_History_lookupSender_insert (MessageWithHistory h m) (NonNegative dt) =
+        (EventSet.advanceBy dt
+         . flip (foldr EventSet.insert) ts
+         . History.lookupSender f) h
+        ==
+        (History.lookupSender f
+         . History.advanceBy dt
+         . History.insert m) h
+  where
+    f = messageFrom m
+    ts = messageTo m
+
+prop_History_lookupReceiver_insert (MessageWithHistory h m) (NonNegative dt) =
+    flip all ts $ \t ->
+        (EventSet.advanceBy dt
+         . EventSet.insert f
+         . History.lookupReceiver t) h
+        ==
+        (History.lookupReceiver t
+         . History.advanceBy dt
+         . History.insert m) h
+  where
+    f = messageFrom m
+    ts = messageTo m
+
+prop_History_lookupReceiver_lookupSender h =
+    and [ and [ Just dt == (EventSet.lookup s $ History.lookupReceiver r h)
+              | (r,dt) <- EventSet.past $ History.lookupSender s h
+              ]
+        | s <- History.senders h
+        ]
+
+prop_History_lookupSender_lookupReceiever h =
+    and [ and [ Just dt == (EventSet.lookup r $ History.lookupSender s h)
+              | (s,dt) <- EventSet.past $ History.lookupReceiver r h
+              ]
+        | r <- History.receivers h
+        ]
+
+
+
+tests_Vars = testGroup "Vars"
+    [ testProperty "senders . fromActors" prop_Vars_senders_fromActors
+    , testProperty "receivers . fromActors" prop_Vars_receivers_fromActors
+    , testProperty "dyad . fromActors (static only)" prop_Vars_dyad_fromActors_static
+    , testProperty "sender . fromActors (static only)" prop_Vars_sender_fromActors_static
+    , testProperty "dyadChanges" prop_Vars_dyadChanges
+    , testProperty "senderChanges" prop_Vars_senderChanges
+    , testProperty "dyad" prop_Vars_dyad
+    , testProperty "sender" prop_Vars_sender
+    , testProperty "mulDyadBy" prop_Vars_mulDyadBy
+    , testProperty "mulSenderBy" prop_Vars_mulSenderBy
+    ]
+
+prop_Vars_senders_fromActors (ActorsWithVectors sxs rys) sint rint =
+    Vars.senders (Vars.fromActors sxs rys sint rint)
+        == Map.keys sxs
+
+prop_Vars_receivers_fromActors (ActorsWithVectors sxs rys) sint rint =
+    Vars.receivers (Vars.fromActors sxs rys sint rint)
+        == Map.keys rys
+
+prop_Vars_dyad_fromActors_static (ActorsWithVectors sxs rys) sint rint t0 = let
+    v = Vars.fromActors sxs rys sint rint
+    h = History.empty t0
+    in and [ Vars.dyad v h s r
+                 ===
+                 concatVectors [ constantVector d 0
+                               , listVector (p*q)
+                                            [ xi * yj | yj <- elemsVector y
+                                                      , xi <- elemsVector x ]
+                               ]
+           | (s,x) <- Map.assocs sxs
+           , (r,y) <- Map.assocs rys
+           ]
+  where
+    p = (dimVector . snd . Map.findMin) sxs
+    q = (dimVector . snd . Map.findMin) rys
+    d = Intervals.size sint + Intervals.size rint
+    
+prop_Vars_sender_fromActors_static (ActorsWithVectors sxs rys) sint rint t0 = let
+    v = Vars.fromActors sxs rys sint rint
+    h = History.empty t0
+    in and [ Vars.sender v h s
+                 ===
+                 [ (r, Vars.dyad v h s r) | r <- Vars.receivers v ]
+           | s <- Vars.senders v
+           ]
+
+prop_Vars_dyadChanges (VarsWithHistory v h) =
+    and [ and [ ( if i < ns
+                      then (flip Intervals.lookup sint
+                               =<< (EventSet.lookup r
+                                    $ History.lookupSender s h))
+                           == Just i
+                      else (flip Intervals.lookup rint
+                               =<< (EventSet.lookup s
+                                    $ History.lookupSender r h))
+                           == Just (i - ns)
+                &&
+                  e === 1.0
+                )
+              | (i,e) <- Vars.dyadChanges v h s r
+              ]
+        | s <- Vars.senders v
+        , r <- Vars.receivers v
+        ]
+  where
+    sint = Vars.sendIntervals v
+    rint = Vars.receiveIntervals v
+    ns = Intervals.size sint
+
+prop_Vars_senderChanges (VarsWithHistory v h) =
+    and [ Vars.senderChanges v h s
+              ===
+              [ (r, Vars.dyadChanges v h s r)
+              | r <- Vars.receivers v
+              , (not . null) (Vars.dyadChanges v h s r)
+              ]
+        | s <- Vars.senders v
+        ]
+    
+prop_Vars_dyad (VarsWithHistory v h) t0 =
+    and [ Vars.dyad v h s r
+              ===
+              accumVector (+) (Vars.dyad v h0 s r) (Vars.dyadChanges v h s r)
+        | s <- Vars.senders v
+        , r <- Vars.receivers v
+        ]
+  where
+    h0 = History.empty t0
+
+prop_Vars_sender (VarsWithHistory v h) =
+    and [ Vars.sender v h s
+              ===
+              [ (r, Vars.dyad v h s r)
+              | r <- Vars.receivers v
+              ]
+        | s <- Vars.senders v
+        ]
+
+prop_Vars_mulDyadBy (VarsWithHistory v h) =
+    forAll (Test.vector $ Vars.dim v) $ \beta ->
+        and [ Vars.mulDyadBy beta v h s r
+                  ~==
+                  dotVector (Vars.dyad v h s r) beta
+            | s <- Vars.senders v
+            , r <- Vars.receivers v
+            ]
+
+prop_Vars_mulSenderBy (VarsWithHistory v h) =
+    forAll (Test.vector $ Vars.dim v) $ \beta ->
+        and [ Vars.mulSenderBy beta v h s
+                  ~==
+                  [ (r, dotVector x beta) | (r,x) <- Vars.sender v h s ]
+            | s <- Vars.senders v
+            ]
+            
+{-
+
 history :: [SenderId] -> [ReceiverId]
         -> UTCTime
         -> DVars
@@ -200,16 +495,6 @@ instance Arbitrary DVarsWithHistory where
         h <- history is js t0 dv
         return $ DVarsWithHistory h dv
 
-data MessageWithHistory = MessageWithHistory History Message deriving (Show)
-instance Arbitrary MessageWithHistory where
-    arbitrary = do
-        dv <- arbitrary
-        (ActorIdList is) <- arbitrary
-        (ActorIdList js) <- arbitrary
-        t0 <- arbitrary
-        h <- history is js t0 dv
-        m <- message is js
-        return $ MessageWithHistory h m
     
 data MessagesWithVars =
     MessagesWithVars SVars DVars History [(UTCTime, Message)] deriving (Show)
@@ -279,214 +564,7 @@ instance Arbitrary SenderModelWithHistory where
 
 
 
-tests_SVars = testGroup "SVars"
-    [ testProperty "interactions" prop_SVars_interactions
-    , testProperty "dim . fromActors" prop_SVars_dim_fromActors
-    , testProperty "senders . fromActors" prop_SVars_senders_fromActors
-    , testProperty "receivers . fromActors" prop_SVars_receivers_fromActors
-    , testProperty "lookupDyad . fromActors" prop_SVars_lookupDyad_fromActors
-    , testProperty "lookupSender . fromActors" prop_SVars_lookupSender_fromActors
-    ]
 
-prop_SVars_interactions s r =
-    SVars.interactions s r
-        == listVector p [ xi * yj | yj <- elemsVector y
-                                  , xi <- elemsVector x ]
-  where
-    x = actorVars s
-    y = actorVars r
-    p = dimVector x * dimVector y
-
-prop_SVars_dim_fromActors ss rs =
-    SVars.dim (SVars.fromActors ss rs)
-        == dimVector (SVars.interactions s r)
-  where
-    s = snd $ Map.elemAt 0 ss
-    r = snd $ Map.elemAt 0 rs
-
-prop_SVars_senders_fromActors ss rs =
-    SVars.senders (SVars.fromActors ss rs) == ss
-
-prop_SVars_receivers_fromActors ss rs =
-    SVars.receivers (SVars.fromActors ss rs) == rs
-
-prop_SVars_lookupDyad_fromActors ss rs = let
-    sv = SVars.fromActors ss rs
-    in and [ SVars.lookupDyad i j sv
-                == SVars.interactions s r
-           | (i,s) <- Map.assocs ss, (j,r) <- Map.assocs rs ]
-    
-prop_SVars_lookupSender_fromActors ss rs = let
-    sv = SVars.fromActors ss rs
-    in and [ SVars.lookupSender i sv
-                == [ (j, SVars.interactions s r) | (j,r) <- Map.assocs rs ] 
-           | (i,s) <- Map.assocs ss ]
-
-
-tests_Intervals = testGroup "Intervals"
-    [ testProperty "size . fromList" prop_Intervals_size_fromList
-    , testProperty "at . fromList" prop_Intervals_at_fromList
-    , testProperty "assocs . fromList" prop_Intervals_assocs_fromList     
-    , testProperty "toList . fromList" prop_Intervals_toList_fromList 
-    , testProperty "fromList . toList" prop_Intervals_fromList_toList
-    , testProperty "lookup (empty)" prop_Intervals_lookup_empty
-    , testProperty "lookup (nonpositive)" prop_Intervals_lookup_nonpos
-    , testProperty "lookup (endpoint)" prop_Intervals_lookup_endpoint
-    , testProperty "lookup (before endpoint)" prop_Intervals_lookup_before_endpoint    
-    , testProperty "lookup (after endpoint)" prop_Intervals_lookup_after_endpoint        
-    , testProperty "lookkup (beyond last)" prop_Intervals_lookup_beyond_last
-    ]
-
-prop_Intervals_size_fromList (IntervalList ts) =
-    (Intervals.size . Intervals.fromList) ts == length ts
-    
-prop_Intervals_at_fromList (IntervalList ts) = let
-    iset = Intervals.fromList ts
-    in and [ Intervals.at i iset == t | (i,t) <- zip [ 0.. ] ts ]
-
-prop_Intervals_assocs_fromList (IntervalList ts) =
-    (Intervals.assocs . Intervals.fromList) ts == zip [ 0.. ] ts
-
-prop_Intervals_toList_fromList (IntervalList ts) =
-    (Intervals.toList . Intervals.fromList) ts == ts
-    
-prop_Intervals_fromList_toList iset =
-    (Intervals.fromList . Intervals.toList) iset == iset
-    
-prop_Intervals_lookup_empty t (EmptyIntervals iset) =
-    Intervals.lookup t iset == Nothing
-
-prop_Intervals_lookup_nonpos t iset =
-    Intervals.lookup (negate $ abs t) iset == Nothing
-    
-prop_Intervals_lookup_endpoint (NonEmptyIntervals iset) =
-    forAll (choose (0,n-1)) $ \i -> let
-        t = Intervals.at i iset
-        in Intervals.lookup t iset == Just i
-  where
-    n = Intervals.size iset
-
-prop_Intervals_lookup_before_endpoint (NonEmptyIntervals iset) =
-    forAll (choose (0,n-1)) $ \i -> let
-        t_begin = if i == 0 then 0 else Intervals.at (i-1) iset
-        t_end = Intervals.at i iset
-        t = pred t_end
-        in Intervals.lookup t iset ==
-            if t == 0 then Nothing
-                      else if t == t_begin then Just (i-1)
-                                           else Just i
-  where
-    n = Intervals.size iset
-
-prop_Intervals_lookup_after_endpoint (NonEmptyIntervals iset) =
-    forAll (choose (0,n-1)) $ \i -> let
-        t_begin = if i == 0 then 0 else Intervals.at (i-1) iset
-        t = succ t_begin
-        in Intervals.lookup t iset == Just i
-  where
-    n = Intervals.size iset
-
-prop_Intervals_lookup_beyond_last (NonEmptyIntervals iset) =
-    Intervals.lookup (succ tlast) iset == Nothing
-  where
-    n = Intervals.size iset
-    tlast = Intervals.at (n - 1) iset
-
-
-tests_EventSet = testGroup "EventSet"
-    [ testProperty "current . insert" prop_EventSet_current_insert
-    , testProperty "past . advanceBy" prop_EventSet_past_advanceBy
-    , testProperty "lookup . advanceBy . insert" prop_EventSet_lookup_advanceBy_insert
-    ]
-    
-prop_EventSet_current_insert h e =
-    (sort . EventSet.current . EventSet.insert e) h
-    ==
-    (sort . nub . (e:) . EventSet.current) h
-  where
-    _ = h :: EventSet Int
-    
-prop_EventSet_past_advanceBy h (NonNegative dt)
-    | dt == 0 =
-        ((EventSet.past . EventSet.advanceBy dt) h)
-            `eq`
-            (EventSet.past h)
-    | otherwise =
-        ((EventSet.past . EventSet.advanceBy dt) h)
-            `eq`
-            (nubBy ((==) `on` fst))
-                 (map (\e -> (e,dt)) (EventSet.current h)
-                  ++
-                  map (\(e,t) -> (e,t+dt)) (EventSet.past h)
-                 )
-  where
-    eq xs ys = sort xs == sort ys
-    _ = h :: EventSet Int
-    
-prop_EventSet_lookup_advanceBy_insert h e (NonNegative dt) =
-    (EventSet.lookup e
-     . EventSet.advanceBy dt'
-     . EventSet.insert e) h
-        == Just dt'
-  where
-    dt' = succ dt
-    _ = e :: Int
-
-tests_History = testGroup "History"
-    [ testProperty "lookupSender" prop_History_lookupSender
-    , testProperty "lookupReceiver" prop_History_lookupReceiver
-    ]
-
-prop_History_lookupSender (MessageWithHistory c m) (NonNegative dt) =
-        (EventSet.advanceBy dt
-         . flip (foldr EventSet.insert) ts
-         . History.lookupSender f) c
-        ==
-        (History.lookupSender f
-         . History.advanceBy dt
-         . History.insert m) c
-  where
-    f = messageFrom m
-    ts = messageTo m
-
-prop_History_lookupReceiver (MessageWithHistory c m) (NonNegative dt) =
-    flip all ts $ \t ->
-        (EventSet.advanceBy dt
-         . EventSet.insert f
-         . History.lookupReceiver t) c
-        ==
-        (History.lookupReceiver t
-         . History.advanceBy dt
-         . History.insert m) c
-  where
-    f = messageFrom m
-    ts = messageTo m
-
-tests_DVars = testGroup "DVars"
-        [ testProperty "lookupSender" prop_DVars_lookupSender
-        , testProperty "lookupDyad (dual)" prop_DVars_lookupDyad_dual
-        ]
-
-prop_DVars_lookupSender (DVarsWithHistory h dv) =
-    flip all (History.senders h) $ \s -> let
-        rds = DVars.lookupSender h s dv
-        in map (second sort) rds
-               == [ (r, sort $ DVars.lookupDyad h s r dv)
-                  | (r,_) <- rds ]
-
-prop_DVars_lookupDyad_dual (ActorIdList ss) (ActorIdList rs) t0 int =
-    forAll (history ss rs t0 dv) $ \h ->
-        flip all (History.senders h) $ \s ->
-        flip all (History.receivers h) $ \r ->
-            (dual . sort) (DVars.lookupDyad h s r dv)
-                == sort (DVars.lookupDyad h r s dv)
-  where
-    dv = DVars.fromIntervals int int
-
-    dual [] = []
-    dual [ Send i ] = [ Receive i ]
-    dual [ Receive i' ] = [ Send i' ]
-    dual [ Send i, Receive i' ] = [ Send i', Receive i ]
 
 
 tests_Summary = testGroup "Summary"
@@ -635,14 +713,13 @@ prop_Model_expectedDVars (SenderModelWithHistory h sm) =
     rm = Model.receiverModel h sm
     p = Model.params sm
     dv = Params.dvars p
-
+-}
     
 main :: IO ()
-main = defaultMain [ tests_SVars
-                   , tests_Intervals
+main = defaultMain [ tests_Intervals
                    , tests_EventSet
                    , tests_History
-                   , tests_DVars
-                   , tests_Summary
-                   , tests_Model
+                   , tests_Vars
+                   -- , tests_Summary
+                   -- , tests_Model
                    ]
