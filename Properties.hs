@@ -8,10 +8,10 @@ import Data.AEq( AEq(..) )
 import Data.Time
 import Data.Time.Clock.POSIX( posixSecondsToUTCTime )
 import Data.Function( on )
-import Data.List( foldl', foldl1', nub, nubBy, sort )
+import Data.List( foldl', foldl1', nub, nubBy, sort, maximumBy )
 import Data.Map( Map )
 import qualified Data.Map as Map
-import Data.Maybe( fromJust, catMaybes, mapMaybe )
+import Data.Maybe( fromMaybe, fromJust, catMaybes, mapMaybe )
 import qualified Data.Map as Map
 import Debug.Trace
 import System.Random( Random )
@@ -23,6 +23,7 @@ import qualified Test.QuickCheck.LinearAlgebra as Test
 import Numeric.LinearAlgebra
 
 import Actor( Actor(..), ActorId, SenderId, ReceiverId )
+import Message( Message(..) )
 
 import History( History )
 import qualified History as History
@@ -30,13 +31,23 @@ import qualified History as History
 import EventSet( EventSet )
 import qualified EventSet as EventSet
 
-import Intervals(Intervals )
+import Intervals( Intervals )
 import qualified Intervals as Intervals
 
-import Message
+import Model( Model )
+import qualified Model as Model
 
 import Vars( Vars )
 import qualified Vars as Vars
+
+verboseEq a b | a === b = True
+              | otherwise =
+    trace ("\nexpected: " ++ show b ++ "\nactual: " ++ show a) False
+
+verboseAEq a b | a ~== b = True
+              | otherwise =
+    trace ("\nexpected: " ++ show b ++ "\nactual: " ++ show a) False
+
 
 -- | Times are in [Jan 1, 1970, Feb 1, 1970)
 instance Arbitrary UTCTime where
@@ -132,6 +143,13 @@ instance Arbitrary ActorsWithVectors where
         return $ ActorsWithVectors (Map.fromList $ zip ss xs)
                                    (Map.fromList $ zip rs ys)
 
+instance Arbitrary Vars where
+    arbitrary = do
+        (ActorsWithVectors sxs rys) <- arbitrary
+        sint <- arbitrary
+        rint <- arbitrary
+        return $ Vars.fromActors sxs rys sint rint
+
 history :: Actors -> Gen History
 history as = do
     ms <- messages as
@@ -148,11 +166,9 @@ instance Arbitrary History where
 data VarsWithHistory = VarsWithHistory Vars History deriving (Show)
 instance Arbitrary VarsWithHistory where
     arbitrary = do
-        (ActorsWithVectors sxs rys) <- arbitrary
-        sint <- arbitrary
-        rint <- arbitrary
-        h <- history (Actors (Map.keys sxs) (Map.keys rys))
-        return $ VarsWithHistory (Vars.fromActors sxs rys sint rint) h
+        v <- arbitrary
+        h <- history $ Actors (Vars.senders v) (Vars.receivers v)
+        return $ VarsWithHistory v h
 
 message :: Actors -> Gen Message
 message = messageWithLoop True
@@ -173,13 +189,27 @@ messagesWithLoops loops as = sized $ \n -> do
     k <- choose (0,n)
     replicateM k $ messageWithLoop loops as
 
-data MessageWithHistory = MessageWithHistory History Message deriving Show
+data MessageWithHistory = MessageWithHistory Message History deriving Show
 instance Arbitrary MessageWithHistory where
     arbitrary = do
         as <- arbitrary
         m  <- message as
         h <- history as
-        return $ MessageWithHistory h m
+        return $ MessageWithHistory m h
+
+instance Arbitrary Model where
+    arbitrary = do
+        v <- arbitrary
+        c <- Test.vector (Vars.dim v)
+        l <- elements [ Model.Loops, Model.NoLoops ]
+        return $ Model.fromVars v c l
+
+data ModelWithHistory = ModelWithHistory Model History deriving Show
+instance Arbitrary ModelWithHistory where
+    arbitrary = do
+        m <- arbitrary
+        h <- history $ Actors (Model.senders m) (Model.receivers m)
+        return $ ModelWithHistory m h
 
 
 tests_Intervals = testGroup "Intervals"
@@ -299,7 +329,7 @@ tests_History = testGroup "History"
     , testProperty "lookupReceiver/lookupSender" prop_History_lookupReceiver_lookupSender
     ]
 
-prop_History_lookupSender_insert (MessageWithHistory h m) (NonNegative dt) =
+prop_History_lookupSender_insert (MessageWithHistory m h) (NonNegative dt) =
         (EventSet.advance dt
          . flip (foldr EventSet.insert) ts
          . History.lookupSender f) h
@@ -311,7 +341,7 @@ prop_History_lookupSender_insert (MessageWithHistory h m) (NonNegative dt) =
     f = messageFrom m
     ts = messageTo m
 
-prop_History_lookupReceiver_insert (MessageWithHistory h m) (NonNegative dt) =
+prop_History_lookupReceiver_insert (MessageWithHistory m h) (NonNegative dt) =
     flip all ts $ \t ->
         (EventSet.advance dt
          . EventSet.insert f
@@ -456,106 +486,223 @@ prop_Vars_mulSenderBy (VarsWithHistory v h) =
                   [ (r, dotVector x beta) | (r,x) <- Vars.sender v h s ]
             | s <- Vars.senders v
             ]
-            
+
+tests_Model = testGroup "Model"
+    [ testProperty "logWeight (static)" prop_Model_logWeight_static
+    , testProperty "logWeight" prop_Model_logWeight
+    , testProperty "logWeightChange" prop_Model_logWeightChange
+    , testProperty "logWeightChanges" prop_Model_logWeightChanges
+    , testProperty "logWeights" prop_Model_logWeights
+    , testProperty "weight" prop_Model_weight
+    , testProperty "weights" prop_Model_weights
+    , testProperty "sumWeights (static)" prop_Model_sumWeights_static
+    , testProperty "sumWeights" prop_Model_sumWeights    
+    , testProperty "probs (static)" prop_Model_probs_static
+    , testProperty "probs" prop_Model_probs
+    , testProperty "sum . probs (static)" prop_Model_sum_probs_static
+    , testProperty "sum . probs" prop_Model_sum_probs
+    , testProperty "prob (static)" prop_Model_prob_static
+    , testProperty "prob" prop_Model_prob
+    , testProperty "meanVars (static)" prop_Model_meanVars_static
+    , testProperty "meanVars" prop_Model_meanVars
+    , testProperty "covVars (static)" prop_Model_covVars_static    
+    , testProperty "covVars" prop_Model_covVars
+    ]
+
+prop_Model_logWeight_static m =
+    and [ Model.logWeight m h s r
+             ~==
+             if Model.validDyad m s r
+                 then Vars.mulDyadBy beta v h s r
+                 else neginf 
+        | s <- Model.senders m
+        , r <- Model.receivers m
+        ]
+  where
+    beta = Model.coefs m
+    v = Model.vars m
+    h = History.empty
+    neginf = -1/0 :: Double
+
+prop_Model_logWeight (ModelWithHistory m h) =
+    and [ Model.logWeight m h s r
+             ~==
+             if Model.validDyad m s r
+                 then Vars.mulDyadBy beta v h s r
+                 else neginf 
+        | s <- Model.senders m
+        , r <- Model.receivers m
+        ]
+  where
+    beta = Model.coefs m
+    v = Model.vars m
+    neginf = -1/0 :: Double
+
+prop_Model_logWeightChange (ModelWithHistory m h) =
+    and [ if not (Model.validDyad m s r)
+              then Model.logWeightChange m h s r === 0
+              else (Model.logWeightChange m h s r + Model.logWeight m h0 s r)
+                   `verboseAEq` Model.logWeight m h s r
+        | s <- Model.senders m
+        , r <- Model.receivers m
+        ]
+  where
+    h0 = History.empty
+
+prop_Model_logWeightChanges (ModelWithHistory m h) =
+    and [ fromMaybe 0 (lookup r $ Model.logWeightChanges m h s)
+              ~==
+              Model.logWeightChange m h s r
+        | s <- Model.senders m
+        , r <- Model.validReceivers m s
+        ]
+
+prop_Model_logWeights (ModelWithHistory m h) =
+    and [ Model.logWeights m h s
+            ~== [ (r, Model.logWeight m h s r)
+                | r <- Model.validReceivers m s
+                ]
+        | s <- Model.senders m
+        ]
+
+prop_Model_weight (ModelWithHistory m h) =
+    and [ Model.weight m h s r
+             ~==
+             exp (Model.logWeight m h s r)
+        | s <- Model.senders m
+        , r <- Model.receivers m
+        ]
+  where
+    h0 = History.empty
+
+prop_Model_weights (ModelWithHistory m h) =
+    and [ Model.weights m h s
+            ~== [ (r, Model.weight m h s r)
+                | r <- Model.validReceivers m s
+                ]
+        | s <- Model.senders m
+        ]
+
+prop_Model_sumWeights_static m =
+    and [ Model.sumWeights m h s ~== (sum . snd . unzip) (Model.weights m h s)
+        | s <- Model.senders m
+        ]
+  where
+    h = History.empty
+
+prop_Model_sumWeights (ModelWithHistory m h) =
+    and [ Model.sumWeights m h s ~== (sum . snd . unzip) (Model.weights m h s)
+        | s <- Model.senders m
+        ]
+
+prop_Model_probs_static m =
+    and [ and [ Model.prob m History.empty s r
+                    `verboseAEq`
+                    fromMaybe 0 (lookup r (Model.probs m History.empty s))
+              | r <- Model.receivers m
+              ]
+        | s <- Model.senders m
+        ]
+
+prop_Model_probs (ModelWithHistory m h) =
+    and [ and [ Model.prob m h s r
+                    `verboseAEq`
+                    fromMaybe 0 (lookup r (Model.probs m h s))
+              | r <- Model.receivers m
+              ]
+        | s <- Model.senders m
+        ]
+
+prop_Model_sum_probs_static m =
+    and [ (sum . snd . unzip) (Model.probs m History.empty s) ~== 1
+        | s <- Model.senders m
+        , (not . null) (Model.probs m History.empty s)
+        ]
+
+prop_Model_sum_probs (ModelWithHistory m h) =
+    and [ (sum . snd . unzip) (Model.probs m h s) ~== 1
+        | s <- Model.senders m
+        , (not . null) (Model.probs m h s)
+        ]
+
+prop_Model_prob_static m =
+    and [ and [ (Model.prob m h s r / Model.prob m h s r0)
+                    `verboseAEq`
+                    exp (Model.logWeight m h s r - Model.logWeight m h s r0)
+              | r <- Model.validReceivers m s
+              ]
+        | s <- Model.senders m
+        , (not . null) (Model.validReceivers m s)
+        , (r0,_) <- [ maximumBy (compare `on` snd) $ Model.probs m h s ]
+        ]
+  where
+    h = History.empty    
+
+prop_Model_prob (ModelWithHistory m h) =
+    and [ and [ (Model.prob m h s r / Model.prob m h s r0)
+                    `verboseAEq`
+                    exp (Model.logWeight m h s r - Model.logWeight m h s r0)
+              | r <- Model.validReceivers m s
+              ]
+        | s <- Model.senders m
+        , (not . null) (Model.validReceivers m s)
+        , (r0,_) <- [ maximumBy (compare `on` snd) $ Model.probs m h s ]
+        ]
+
+prop_Model_meanVars_static m =
+    flip all (Model.senders m) $ \s ->
+        Model.meanVars m h s
+            `verboseAEq`
+            weightedMeanVector (Vars.dim v)
+                               [ (Model.prob m h s r, x)
+                               | (r,x) <- Vars.sender v h s
+                               ]
+  where
+    h = History.empty
+    v = Model.vars m
+
+prop_Model_meanVars (ModelWithHistory m h) =
+    flip all (Model.senders m) $ \s ->
+        Model.meanVars m h s
+            `verboseAEq`
+            weightedMeanVector (Vars.dim v)
+                               [ (Model.prob m h s r, x)
+                               | (r,x) <- Vars.sender v h s
+                               ]
+  where
+    v = Model.vars m
+
+prop_Model_covVars_static m =
+    forAll (Test.vector $ Vars.dim v) $ \z ->
+    flip all (Model.senders m) $ \s ->
+        let cov  = Model.covVars m h s
+            cov' = weightedCovMatrix (Vars.dim v) MLCov
+                                    [ (Model.prob m h s r, x)
+                                    | (r,x) <- Vars.sender v h s
+                                    ]
+        in
+            mulHermMatrixVector cov z
+                ~== mulHermMatrixVector cov' z
+  where
+    h = History.empty
+    v = Model.vars m
+
+prop_Model_covVars (ModelWithHistory m h) =
+    forAll (Test.vector $ Vars.dim v) $ \z ->
+    flip all (Model.senders m) $ \s ->
+        let cov  = Model.covVars m h s
+            cov' = weightedCovMatrix (Vars.dim v) MLCov
+                                    [ (Model.prob m h s r, x)
+                                    | (r,x) <- Vars.sender v h s
+                                    ]
+        in
+            mulHermMatrixVector cov z
+                ~== mulHermMatrixVector cov' z
+  where
+    v = Model.vars m
+
+
 {-
-
-history :: [SenderId] -> [ReceiverId]
-        -> UTCTime
-        -> DVars
-        -> Gen History
-history is js t0 dv = do
-    n <- choose (0,100)
-    dts <- (sort . map (negate . abs)) `fmap` replicateM n arbitrary
-    ms <- replicateM n $ message is js
-    
-    let ts = map (`addUTCTime` t0) dts
-        h0 = DVars.history (minimum (t0:ts)) dv
-        h = fst $ History.accum h0 $ zip ts ms
-        h' = History.advanceTo t0 h
-    
-    return h'
-
-data DVarsWithHistory = DVarsWithHistory History DVars deriving (Show)
-instance Arbitrary DVarsWithHistory where
-    arbitrary = do
-        dv <- arbitrary
-        (ActorIdList is) <- arbitrary
-        (ActorIdList js) <- arbitrary
-        t0 <- arbitrary
-        h <- history is js t0 dv
-        return $ DVarsWithHistory h dv
-
-    
-data MessagesWithVars =
-    MessagesWithVars SVars DVars History [(UTCTime, Message)] deriving (Show)
-instance Arbitrary MessagesWithVars where
-    arbitrary = do
-        (ActorIdList ss) <- arbitrary
-        (ActorIdList rs) <- arbitrary
-
-        t <- arbitrary
-        (t0:ts) <- fmap (sort . (t:)) arbitrary
-        ms <- replicateM (length ts) $ message ss rs
-
-        sv <- svars ss rs
-        dv <- arbitrary
-        h <- history ss rs t0 dv
-        
-        return $ MessagesWithVars sv dv h $ zip ts ms
-
-data MessageWithVars =
-    MessageWithVars SVars DVars History Message deriving (Show)
-instance Arbitrary MessageWithVars where
-    arbitrary = do
-        (MessagesWithVars sv dv h _) <- arbitrary
-        let ss = Map.keys $ SVars.senders sv
-            rs = Map.keys $ SVars.receivers sv
-        m <- message ss rs
-        return $ MessageWithVars sv dv h m
-
-
-params :: SVars -> DVars -> Gen Params
-params sv dv = let
-    ps = SVars.dim sv
-    pd = DVars.dim dv
-    in do
-        sc <- listVector ps `fmap` replicateM ps (choose (-5,5))
-        dc <- listVector pd `fmap` replicateM pd (choose (-5,5))
-        l <- arbitrary
-        return $ (Params.defaultParams sv dv)
-                     { Params.scoefs = sc
-                     , Params.dcoefs = dc
-                     , Params.hasSelfLoops = l
-                     }
-
-data ParamsWithVars =
-    ParamsWithVars SVars DVars History Params deriving (Show)
-instance Arbitrary ParamsWithVars where
-    arbitrary = do
-        (MessageWithVars sv dv h _) <- arbitrary
-        p <- params sv dv
-        return $ ParamsWithVars sv dv h p
-
-data SenderModelWithHistory =
-    SenderModelWithHistory History SenderModel deriving (Show)
-instance Arbitrary SenderModelWithHistory where
-    arbitrary = do
-        (ActorIdList ss) <- arbitrary
-        s <- elements ss
-        (ActorIdList rs0) <- arbitrary -- make sure there is a non-loop
-        let rs = nub $ (s+1):rs0
-        
-        t0 <- arbitrary
-        sv <- svars ss rs
-        dv <- arbitrary
-        h <- history ss rs t0 dv
-        p <- params sv dv
-        return $ SenderModelWithHistory h $ Model.senderModel p s
-
-
-
-
-
 
 tests_Summary = testGroup "Summary"
     [ testProperty "singleton" prop_Summary_singleton
@@ -594,115 +741,6 @@ prop_Summary_fromList (MessagesWithVars s d h tms) =
     (_,hms) = History.accum h tms
 
 
-tests_Model = testGroup "Model"
-    [ testProperty "receivers (static)" prop_Model_receivers_static
-    , testProperty "receivers" prop_Model_receivers
-    , testProperty "sum . probs (static)" prop_Model_sum_probs_static
-    , testProperty "sum . probs" prop_Model_sum_probs
-    , testProperty "prob (static)" prop_Model_prob_static
-    , testProperty "prob" prop_Model_prob
-    , testProperty "probParts (static)" prop_Model_prob_parts_static
-    , testProperty "probParts" prop_Model_prob_parts    
-    , testProperty "exptectedSVars (static)" prop_Model_expectedSVars_static
-    , testProperty "exptectedSVars" prop_Model_expectedSVars
-    , testProperty "expectedDVars (static)" prop_Model_expectedDVars_static
-    , testProperty "expectedDVars" prop_Model_expectedDVars
-    ]
-    
-prop_Model_receivers (SenderModelWithHistory h sm) =
-    sort (Model.receivers (Model.receiverModel h sm))
-        ==
-        sort (Params.receivers s p)
-  where
-    p = Model.params sm
-    s = Model.sender sm
-
-prop_Model_receivers_static (SenderModelWithHistory _ sm) =
-    sort (Model.receivers (Model.staticReceiverModel sm))
-        ==
-        sort (Params.receivers s p)
-  where
-    p = Model.params sm
-    s = Model.sender sm
-
-prop_Model_sum_probs_static (SenderModelWithHistory _ sm) =
-    sum (snd $ unzip $ Model.probs $ Model.staticReceiverModel sm) ~== 1
-
-prop_Model_prob_static (SenderModelWithHistory _ sm) =
-    flip all (Model.probs $ Model.staticReceiverModel sm) $ \(r,prob) ->
-        prob ~== Params.staticProb s r p
-  where
-    s = Model.sender sm
-    p = Model.params sm
-
-prop_Model_sum_probs (SenderModelWithHistory h sm) =
-    sum (snd $ unzip $ Model.probs $ Model.receiverModel h sm) ~== 1
-
-prop_Model_prob (SenderModelWithHistory h sm) =
-    flip all (Model.probs rm) $ \(r,prob) ->
-        prob ~== Params.prob h s r p
-  where
-    s = Model.sender sm
-    rm = Model.receiverModel h sm
-    p = Model.params sm
-
-prop_Model_prob_parts_static (SenderModelWithHistory _ sm) =
-    flip all (Model.receivers rm) $ \r -> let
-        (w0,d) = Model.probParts rm r
-        in w0 == 1 && d == 0
-  where
-    s = Model.sender sm
-    rm = Model.staticReceiverModel sm
-    p = Model.params sm        
-
-prop_Model_prob_parts (SenderModelWithHistory h sm) =
-    flip all (Model.receivers rm) $ \r -> let
-        (w0,d) = Model.probParts rm r
-        in w0 * Params.staticProb s r p + d
-               ~== Params.prob h s r p
-  where
-    s = Model.sender sm
-    rm = Model.receiverModel h sm
-    p = Model.params sm        
-
-prop_Model_expectedSVars_static (SenderModelWithHistory _ sm) =
-    Model.expectedSVars rm
-        ~==
-        foldl' (flip $ \(r,w) ->
-                    addVectorWithScales w (SVars.lookupDyad s r sv) 1)
-               (constantVector (SVars.dim sv) 0)
-               (Model.probs rm)
-  where
-    s = Model.sender sm
-    rm = Model.staticReceiverModel sm
-    p = Model.params sm
-    sv = Params.svars p
-
-prop_Model_expectedSVars (SenderModelWithHistory h sm) =
-    Model.expectedSVars rm
-        ~==
-        Params.expectedSVars h s p
-  where
-    s = Model.sender sm
-    rm = Model.receiverModel h sm
-    p = Model.params sm
-    sv = Params.svars p
-
-prop_Model_expectedDVars_static (SenderModelWithHistory _ sm) =
-    Model.expectedDVars rm == []
-  where
-    s = Model.sender sm
-    rm = Model.staticReceiverModel sm
-
-prop_Model_expectedDVars (SenderModelWithHistory h sm) =
-    (sort . filter ((/= 0) . snd)) (Model.expectedDVars rm)
-        ~==
-        (sort . filter ((/= 0) . snd)) (Params.expectedDVars h s p)
-  where
-    s = Model.sender sm
-    rm = Model.receiverModel h sm
-    p = Model.params sm
-    dv = Params.dvars p
 -}
     
 main :: IO ()
@@ -710,6 +748,6 @@ main = defaultMain [ tests_Intervals
                    , tests_EventSet
                    , tests_History
                    , tests_Vars
+                   , tests_Model
                    -- , tests_Summary
-                   -- , tests_Model
                    ]
