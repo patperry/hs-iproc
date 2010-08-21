@@ -80,25 +80,24 @@ instance Arbitrary NonEmptyIntervals where
         (NonEmptyIntervalList ts) <- arbitrary
         return $ NonEmptyIntervals $ Intervals.fromList ts
 
-data UpdateEventSet e = EventSetAdvanceBy NominalDiffTime
+data UpdateEventSet e = EventSetAdvance NominalDiffTime
                       | EventSetInsert e
     deriving (Show)
     
 updateEventSet :: (Ord e) => UpdateEventSet e -> EventSet e -> EventSet e
-updateEventSet (EventSetAdvanceBy dt) = EventSet.advanceBy dt
+updateEventSet (EventSetAdvance dt) = EventSet.advance dt
 updateEventSet (EventSetInsert e) = EventSet.insert e
     
 instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (UpdateEventSet e) where
     arbitrary = do
         dt <- fmap abs arbitrary
         e <- choose (0,5)
-        elements [ EventSetAdvanceBy dt, EventSetInsert e]
+        elements [ EventSetAdvance dt, EventSetInsert e]
 
 instance (Arbitrary e, Ord e, Num e, Random e) => Arbitrary (EventSet e) where
     arbitrary = do
-        t0 <- arbitrary
         us <- arbitrary
-        return $ foldr updateEventSet (EventSet.empty t0) us
+        return $ foldr updateEventSet EventSet.empty us
 
 -- | A list of actors ids (at least two, to avoid self-loop problems)
 data ActorIds = ActorIds [ActorId] deriving (Show)
@@ -138,7 +137,7 @@ history as = do
     ms <- messages as
     t0 <- arbitrary
     ts <- (sort . map (`addUTCTime` t0)) `fmap` replicateM (length ms) arbitrary
-    let (h,_) = History.accum (History.empty t0) $ zip ts ms
+    let ((_,h),_) = History.accum (t0, History.empty) $ zip ts ms
     return h
 
 instance Arbitrary History where
@@ -255,8 +254,8 @@ prop_Intervals_lookup_beyond_last (NonEmptyIntervals int) =
 
 tests_EventSet = testGroup "EventSet"
     [ testProperty "current . insert" prop_EventSet_current_insert
-    , testProperty "past . advanceBy" prop_EventSet_past_advanceBy
-    , testProperty "lookup . advanceBy . insert" prop_EventSet_lookup_advanceBy_insert
+    , testProperty "past . advance" prop_EventSet_past_advance
+    , testProperty "lookup . advance . insert" prop_EventSet_lookup_advance_insert
     ]
     
 prop_EventSet_current_insert h e =
@@ -266,13 +265,13 @@ prop_EventSet_current_insert h e =
   where
     _ = h :: EventSet Int
     
-prop_EventSet_past_advanceBy h (NonNegative dt)
+prop_EventSet_past_advance h (NonNegative dt)
     | dt == 0 =
-        ((EventSet.past . EventSet.advanceBy dt) h)
+        ((EventSet.past . EventSet.advance dt) h)
             `eq`
             (EventSet.past h)
     | otherwise =
-        ((EventSet.past . EventSet.advanceBy dt) h)
+        ((EventSet.past . EventSet.advance dt) h)
             `eq`
             (nubBy ((==) `on` fst))
                  (map (\e -> (e,dt)) (EventSet.current h)
@@ -283,9 +282,9 @@ prop_EventSet_past_advanceBy h (NonNegative dt)
     eq xs ys = sort xs == sort ys
     _ = h :: EventSet Int
     
-prop_EventSet_lookup_advanceBy_insert h e (NonNegative dt) =
+prop_EventSet_lookup_advance_insert h e (NonNegative dt) =
     (EventSet.lookup e
-     . EventSet.advanceBy dt'
+     . EventSet.advance dt'
      . EventSet.insert e) h
         == Just dt'
   where
@@ -301,12 +300,12 @@ tests_History = testGroup "History"
     ]
 
 prop_History_lookupSender_insert (MessageWithHistory h m) (NonNegative dt) =
-        (EventSet.advanceBy dt
+        (EventSet.advance dt
          . flip (foldr EventSet.insert) ts
          . History.lookupSender f) h
         ==
         (History.lookupSender f
-         . History.advanceBy dt
+         . History.advance dt
          . History.insert m) h
   where
     f = messageFrom m
@@ -314,12 +313,12 @@ prop_History_lookupSender_insert (MessageWithHistory h m) (NonNegative dt) =
 
 prop_History_lookupReceiver_insert (MessageWithHistory h m) (NonNegative dt) =
     flip all ts $ \t ->
-        (EventSet.advanceBy dt
+        (EventSet.advance dt
          . EventSet.insert f
          . History.lookupReceiver t) h
         ==
         (History.lookupReceiver t
-         . History.advanceBy dt
+         . History.advance dt
          . History.insert m) h
   where
     f = messageFrom m
@@ -362,9 +361,9 @@ prop_Vars_receivers_fromActors (ActorsWithVectors sxs rys) sint rint =
     Vars.receivers (Vars.fromActors sxs rys sint rint)
         == Map.keys rys
 
-prop_Vars_dyad_fromActors_static (ActorsWithVectors sxs rys) sint rint t0 = let
+prop_Vars_dyad_fromActors_static (ActorsWithVectors sxs rys) sint rint = let
     v = Vars.fromActors sxs rys sint rint
-    h = History.empty t0
+    h = History.empty
     in and [ Vars.dyad v h s r
                  ===
                  concatVectors [ constantVector d 0
@@ -380,9 +379,9 @@ prop_Vars_dyad_fromActors_static (ActorsWithVectors sxs rys) sint rint t0 = let
     q = (dimVector . snd . Map.findMin) rys
     d = Intervals.size sint + Intervals.size rint
     
-prop_Vars_sender_fromActors_static (ActorsWithVectors sxs rys) sint rint t0 = let
+prop_Vars_sender_fromActors_static (ActorsWithVectors sxs rys) sint rint = let
     v = Vars.fromActors sxs rys sint rint
-    h = History.empty t0
+    h = History.empty
     in and [ Vars.sender v h s
                  ===
                  [ (r, Vars.dyad v h s r) | r <- Vars.receivers v ]
@@ -422,7 +421,7 @@ prop_Vars_senderChanges (VarsWithHistory v h) =
         | s <- Vars.senders v
         ]
     
-prop_Vars_dyad (VarsWithHistory v h) t0 =
+prop_Vars_dyad (VarsWithHistory v h) =
     and [ Vars.dyad v h s r
               ===
               accumVector (+) (Vars.dyad v h0 s r) (Vars.dyadChanges v h s r)
@@ -430,7 +429,7 @@ prop_Vars_dyad (VarsWithHistory v h) t0 =
         , r <- Vars.receivers v
         ]
   where
-    h0 = History.empty t0
+    h0 = History.empty
 
 prop_Vars_sender (VarsWithHistory v h) =
     and [ Vars.sender v h s
