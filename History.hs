@@ -25,7 +25,6 @@ import qualified Data.Map as Map
 import Data.Time
 
 import Actor
-import Intervals( Intervals, IntervalId )
 import EventSet( EventSet )
 import qualified EventSet as EventSet
 import Message
