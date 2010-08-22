@@ -93,6 +93,9 @@ receiverIndex v r =
     Indices.findWithDefault (error $ "unknown receiver `" ++ show r ++ "'")
                             r (receiverIndices v)
 
+unsafeReceiverIndex :: Vars -> ReceiverId -> Int
+unsafeReceiverIndex v r = Indices.unsafeAt (receiverIndices v) r
+
 senders :: Vars -> [SenderId]
 senders = Indices.keys . senderIndices
 
@@ -118,7 +121,7 @@ weightReceiverBy rws v h s = let
     x = colMatrix (senderMatrix v) (senderIndex v s)
     in concatVectors 
            [ accumVector (+) (constantVector (dynamicDim v) 0) $
-                 [ (i, atVector w (receiverIndex v r) * d)
+                 [ (i, atVector w (unsafeReceiverIndex v r) * d)
                  | (r, ds) <- senderChanges v h s
                  , (i, d) <- ds
                  ]
@@ -133,7 +136,7 @@ weightReceiverChangesBy rws v h s = let
                 unsafeModifyVector mw (receiverIndex v r) (wt+)
             return mw
     
-    weight r = unsafeAtVector w (receiverIndex v r)
+    weight r = unsafeAtVector w (unsafeReceiverIndex v r)
     
     in filter ((/= 0) . snd) $ assocsVector $ 
            accumVector (+) (constantVector (dynamicDim v) 0) $
@@ -155,7 +158,7 @@ mulSenderBy beta v h s
                  mz <- newVector_ (receiverCount v)
                  mulMatrixToVector Trans (receiverMatrix v) xt_beta1 mz
                  forM_ (mulSenderChangesBy beta v h s) $ \(r,z1) ->
-                     unsafeModifyVector mz (receiverIndex v r) (z1+)
+                     unsafeModifyVector mz (unsafeReceiverIndex v r) (z1+)
                  return mz
         in zip (receivers v) (elemsVector z)
 
@@ -192,13 +195,16 @@ mulDyadChangesBy beta v h s r
     delta = dyadChanges v h
 
 senderChanges :: Vars -> History -> SenderId -> [(ReceiverId, [(Int,Double)])]
-senderChanges v h s | History.null h = []
+senderChanges v h s | not (validSender v s) =
+                        error $ "invalid sender: `" ++ show s ++ "'"
+                    | History.null h = []
                     | otherwise =
     Map.assocs $ Map.unionsWith (++) $ map (Map.fromList . catMaybes)
         [ [ case Intervals.lookup dt sint of
                 Nothing -> Nothing
                 Just i  -> Just (r, [send i])
           | (r,dt) <- EventSet.past $ History.lookupSender s h
+          , validReceiver v r
           ]
         , [ case Intervals.lookup dt' rint of
                 Nothing -> Nothing
@@ -215,7 +221,11 @@ senderChanges v h s | History.null h = []
 
 
 dyadChanges :: Vars -> History -> SenderId -> ReceiverId -> [(Int,Double)]
-dyadChanges v h s r | History.null h = []
+dyadChanges v h s r | not (validSender v s) =
+                        error $ "invalid sender: `" ++ show s ++ "'"
+                    | not (validReceiver v r) =
+                        error $ "invalid receiver: `" ++ show r ++ "'"
+                    | History.null h = []
                     | otherwise = catMaybes
     [ do
           dt <- EventSet.lookup r $ History.lookupSender s h
