@@ -24,21 +24,20 @@ import Numeric.LinearAlgebra
 
 import Actor( Actor(..), ActorId, SenderId, ReceiverId )
 import Message( Message(..) )
-
 import History( History )
-import qualified History as History
-
 import EventSet( EventSet )
-import qualified EventSet as EventSet
-
 import Intervals( Intervals )
-import qualified Intervals as Intervals
-
+import LogLik( LogLik )
 import Model( Model )
-import qualified Model as Model
-
 import Vars( Vars )
+
+import qualified History as History
+import qualified EventSet as EventSet
+import qualified Intervals as Intervals
+import qualified LogLik as LogLik
+import qualified Model as Model
 import qualified Vars as Vars
+
 
 verboseEq a b | a === b = True
               | otherwise =
@@ -138,10 +137,12 @@ instance Arbitrary ActorsWithVectors where
         (Actors ss rs) <- arbitrary
         p <- choose (0,3)
         q <- choose (0,3)
-        xs <- replicateM (length ss) $ Test.vector p
-        ys <- replicateM (length rs) $ Test.vector q
+        xs <- replicateM (length ss) $ testVector p
+        ys <- replicateM (length rs) $ testVector q
         return $ ActorsWithVectors (Map.fromList $ zip ss xs)
                                    (Map.fromList $ zip rs ys)
+      where
+        testVector p = listVector p `fmap` replicateM p (choose (-1,1))
 
 instance Arbitrary Vars where
     arbitrary = do
@@ -150,9 +151,9 @@ instance Arbitrary Vars where
         rint <- arbitrary
         return $ Vars.fromActors sxs rys sint rint
 
-history :: Actors -> Gen History
-history as = do
-    ms <- messages as
+history :: [SenderId] -> [ReceiverId] -> Gen History
+history ss rs = do
+    ms <- messages ss rs
     t0 <- arbitrary
     ts <- (sort . map (`addUTCTime` t0)) `fmap` replicateM (length ms) arbitrary
     let ((_,h),_) = History.accum (t0, History.empty) $ zip ts ms
@@ -160,47 +161,48 @@ history as = do
 
 instance Arbitrary History where
     arbitrary = do
-        as <- arbitrary
-        history as
+        (Actors ss rs) <- arbitrary
+        history ss rs
 
 data VarsWithHistory = VarsWithHistory Vars History deriving (Show)
 instance Arbitrary VarsWithHistory where
     arbitrary = do
         v <- arbitrary
-        h <- history $ Actors (Vars.senders v) (Vars.receivers v)
+        h <- history (Vars.senders v) (Vars.receivers v)
         return $ VarsWithHistory v h
 
-message :: Actors -> Gen Message
+message :: [SenderId] -> [ReceiverId] -> Gen Message
 message = messageWithLoop True
     
-messageWithLoop :: Bool -> Actors -> Gen Message
-messageWithLoop loop (Actors ss rs) = do
+messageWithLoop :: Bool -> [SenderId] -> [ReceiverId] -> Gen Message
+messageWithLoop loop ss rs = do
     f <- elements ss
     let rs' = if loop then rs else filter (/= f) rs
     l <- choose (1, length rs')
     ts <- nub `fmap` replicateM l (elements rs')
     return $ Message f ts
 
-messages :: Actors -> Gen [Message]
+messages :: [SenderId] -> [ReceiverId] -> Gen [Message]
 messages = messagesWithLoops True
     
-messagesWithLoops :: Bool -> Actors -> Gen [Message]
-messagesWithLoops loops as = sized $ \n -> do
+messagesWithLoops :: Bool -> [SenderId] -> [ReceiverId] -> Gen [Message]
+messagesWithLoops loops ss rs = sized $ \n -> do
     k <- choose (0,n)
-    replicateM k $ messageWithLoop loops as
+    replicateM k $ messageWithLoop loops ss rs
 
 data MessageWithHistory = MessageWithHistory Message History deriving Show
 instance Arbitrary MessageWithHistory where
     arbitrary = do
-        as <- arbitrary
-        m  <- message as
-        h <- history as
+        (Actors ss rs) <- arbitrary
+        m  <- message ss rs
+        h <- history ss rs
         return $ MessageWithHistory m h
 
 instance Arbitrary Model where
     arbitrary = do
         v <- arbitrary
-        c <- Test.vector (Vars.dim v)
+        let p = Vars.dim v
+        c <- listVector p `fmap` replicateM p (choose (-1,1))
         l <- elements [ Model.Loops, Model.NoLoops ]
         return $ Model.fromVars v c l
 
@@ -208,9 +210,27 @@ data ModelWithHistory = ModelWithHistory Model History deriving Show
 instance Arbitrary ModelWithHistory where
     arbitrary = do
         m <- arbitrary
-        h <- history $ Actors (Model.senders m) (Model.receivers m)
+        h <- history (Model.senders m) (Model.receivers m)
         return $ ModelWithHistory m h
 
+messageFromModel :: Model -> Gen Message
+messageFromModel m =
+    messageWithLoop (Model.hasLoops m) (Model.senders m) (Model.receivers m)
+
+data ModelWithMessage = ModelWithMessage Model Message deriving Show
+instance Arbitrary ModelWithMessage where
+    arbitrary = do
+        m <- arbitrary
+        msg <- messageFromModel m
+        return $ ModelWithMessage m msg
+
+data ModelWithMessageAndHistory =
+    ModelWithMessageAndHistory Model Message History deriving Show
+instance Arbitrary ModelWithMessageAndHistory where
+    arbitrary = do
+        (ModelWithHistory m h) <- arbitrary
+        msg <- messageFromModel m
+        return $ ModelWithMessageAndHistory m msg h
 
 tests_Intervals = testGroup "Intervals"
     [ testProperty "size . fromList" prop_Intervals_size_fromList
@@ -626,15 +646,17 @@ prop_Model_sumWeights (ModelWithHistory m h) =
 
 prop_Model_logSumWeights_static m =
     flip all (Model.senders m) $ \s ->
-        Model.logSumWeights m h s
-            ~== log (Model.sumWeights m h s)
+    flip all (Model.receivers m) $ \r ->
+        (Model.logWeight m h s r)
+            `verboseAEq` (Model.logProb m h s r + Model.logSumWeights m h s)
   where
     h = History.empty
 
 prop_Model_logSumWeights (ModelWithHistory m h) =
     flip all (Model.senders m) $ \s ->
-        Model.logSumWeights m h s
-            ~== log (Model.sumWeights m h s)
+    flip all (Model.receivers m) $ \r ->
+        (Model.logWeight m h s r)
+            `verboseAEq` (Model.logProb m h s r + Model.logSumWeights m h s)
 
 prop_Model_probs_static m =
     and [ and [ Model.prob m History.empty s r
@@ -743,6 +765,59 @@ prop_Model_covVars (ModelWithHistory m h) =
     v = Model.vars m
 
 
+tests_LogLik = testGroup "LogLik"
+    [ testProperty "value . singleton (static)" prop_LogLik_singleton_value_static
+    , testProperty "value . singleton" prop_LogLik_singleton_value
+    , testProperty "grad . singleton (static)" prop_LogLik_singleton_grad_static
+    , testProperty "grad . singleton" prop_LogLik_singleton_grad
+    ]
+    
+prop_LogLik_singleton_value_static (ModelWithMessage m msg) = let
+    val  = LogLik.value (LogLik.insert (msg, h) $ LogLik.empty m)
+    val' = sum [ Model.logProb m h s r | r <- rs ]
+    in if abs val' > eps
+            then val `verboseAEq` val'
+            else abs val <= eps
+  where
+    h = History.empty
+    s = messageFrom msg
+    rs = messageTo msg
+    eps = 1e-7
+
+prop_LogLik_singleton_value (ModelWithMessageAndHistory m msg h) = let
+    val  = LogLik.value (LogLik.insert (msg, h) $ LogLik.empty m)
+    val' = sum [ Model.logProb m h s r | r <- rs ]
+    in if abs val' > eps
+            then val `verboseAEq` val'
+            else abs val <= eps
+  where
+    s = messageFrom msg
+    rs = messageTo msg
+    eps = 1e-7
+
+prop_LogLik_singleton_grad_static (ModelWithMessage m msg) =
+    LogLik.grad (LogLik.insert (msg, h) $ LogLik.empty m)
+        ~== sumVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
+                                   | r <- rs 
+                                   ]
+  where
+    h = History.empty
+    s = messageFrom msg
+    rs = messageTo msg
+    v = Model.vars m
+    mu = Model.meanVars m h s
+
+prop_LogLik_singleton_grad (ModelWithMessageAndHistory m msg h) =
+    LogLik.grad (LogLik.insert (msg, h) $ LogLik.empty m)
+        ~== sumVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
+                                   | r <- rs 
+                                   ]
+  where
+    s = messageFrom msg
+    rs = messageTo msg
+    v = Model.vars m
+    mu = Model.meanVars m h s
+
 
 main :: IO ()
 main = defaultMain [ tests_Intervals
@@ -750,4 +825,5 @@ main = defaultMain [ tests_Intervals
                    , tests_History
                    , tests_Vars
                    , tests_Model
+                   , tests_LogLik
                    ]
