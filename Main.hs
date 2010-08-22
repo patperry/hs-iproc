@@ -80,13 +80,9 @@ main = do
         h0 = History.empty
         tmhs = snd $ History.accum (t0,h0) tms
         mhs = [ (m,h) | (t,m,h) <- tmhs ]
-        --smry = Summary.fromList sv dv cms
         m = Model.fromVars v (constantVector (Vars.dim v) 0) Model.NoLoops
         ll = foldl' (flip LogLik.insert) (LogLik.empty m) mhs
         
-    -- putStrLn $ "message count: " ++ show (Summary.messageCount smry)
-    -- putStrLn $ "summary: " ++ show smry
-
     putStrLn $ "Null Deviance: " ++ show (LogLik.nullDeviance ll)
     putStrLn $ "Null Df: " ++ show (LogLik.nullDf ll)    
 

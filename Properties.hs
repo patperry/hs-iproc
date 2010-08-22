@@ -743,52 +743,11 @@ prop_Model_covVars (ModelWithHistory m h) =
     v = Model.vars m
 
 
-{-
 
-tests_Summary = testGroup "Summary"
-    [ testProperty "singleton" prop_Summary_singleton
-    , testProperty "fromList" prop_Summary_fromList
-    ]
-
-prop_Summary_singleton (MessageWithVars s d c m) = and
-    [ Summary.messageCount smry == 1
-    , Summary.messageLengthCount smry == Map.singleton (length ts) 1
-    , Summary.sendCount smry == Map.singleton f (length ts)
-    , Summary.receiveCount smry == Map.fromList (zip ts (repeat 1))
-    , Summary.svarsSum smry
-        == foldl1' addVector [ SVars.lookupDyad f t s | t <- ts ]
-    , Summary.dvarsSendSum smry
-        == (foldl' (flip $ \i -> Map.insertWith' (+) i 1)
-                  Map.empty $ concat $
-                  [ mapMaybe DVars.send $ DVars.lookupDyad c f t d
-                  | t <- ts ])
-    , Summary.dvarsReceiveSum smry
-        == (foldl' (flip $ \i -> Map.insertWith' (+) i 1)
-                  Map.empty $ concat $
-                  [ mapMaybe DVars.receive $ DVars.lookupDyad c f t d
-                  | t <- ts ])
-    ]
-  where
-    f = messageFrom m
-    ts = messageTo m
-    smry = Summary.singleton s d (c,m)
-
-prop_Summary_fromList (MessagesWithVars s d h tms) =
-    Summary.fromList s d hms
-        == foldl' Summary.union
-                  (Summary.empty s d)
-                  (map (Summary.singleton s d) hms)
-  where
-    (_,hms) = History.accum h tms
-
-
--}
-    
 main :: IO ()
 main = defaultMain [ tests_Intervals
                    , tests_EventSet
                    , tests_History
                    , tests_Vars
                    , tests_Model
-                   -- , tests_Summary
                    ]
