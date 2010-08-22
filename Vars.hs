@@ -4,10 +4,14 @@ module Vars (
     dim,
     sendIntervals,
     receiveIntervals,
+
     senders,
-    receivers,
     senderCount,
+    validSender,
+
+    receivers,
     receiverCount,
+    validReceiver,
 
     dyad,
     dyadChanges,
@@ -25,35 +29,33 @@ module Vars (
 
 import Control.Monad( forM_ )
 import Data.List( foldl' )
-import Data.IntMap( IntMap )
-import qualified Data.IntMap as IntMap
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Data.Maybe( catMaybes )
-import Data.IntSet( IntSet )
-import qualified Data.IntSet as IntSet
 import Numeric.LinearAlgebra
 
 import History( History )
+import Indices( Indices )
 import Intervals( Intervals )
 import Types
 import qualified EventSet as EventSet
 import qualified History as History
+import qualified Indices as Indices
 import qualified Intervals as Intervals
 
-        
+
+
 data Vars = 
     Vars { dim :: !Int
-         , senderIxMap :: !(IntMap Int)
-         , receiverIxMap :: !(IntMap Int)
-         , receiverSet :: !IntSet
+         , senderIndices :: !Indices
+         , receiverIndices :: !Indices
          , senderMatrix :: !(Matrix Double)
          , receiverMatrix :: !(Matrix Double)
          , sendIntervals :: !Intervals
          , receiveIntervals :: !Intervals
          , dynamicDim :: !Int
          , staticMatrixDim :: !(Int, Int)
-         } deriving (Eq, Show)
+         } deriving (Show)
           
 fromActors :: Map SenderId (Vector Double)
            -> Map ReceiverId (Vector Double)
@@ -64,9 +66,8 @@ fromActors sm rm sint rint
     | Map.null sm = error "no senders"
     | Map.null rm = error "no receivers"
     | otherwise = let
-        sim = IntMap.fromAscList $ zip (Map.keys sm) [ 0.. ]
-        rim = IntMap.fromAscList $ zip (Map.keys rm) [ 0.. ]
-        rs = IntMap.keysSet rim
+        six = Indices.fromAscList $ Map.keys sm
+        rix = Indices.fromAscList $ Map.keys rm
         ssd = (dimVector . snd . Map.findMin) sm
         srd = (dimVector . snd . Map.findMin) rm
         smat = colListMatrix (ssd, Map.size sm) $ Map.elems sm
@@ -74,45 +75,50 @@ fromActors sm rm sint rint
         dd = Intervals.size sint + Intervals.size rint
         smd = (ssd, srd)
         d = dd + ssd * srd
-        in Vars d sim rim rs smat rmat sint rint dd smd
+        in Vars d six rix smat rmat sint rint dd smd
         
-
-senderIndex :: SenderId -> Vars -> Int
-senderIndex s v =
-    IntMap.findWithDefault (error $ "unknown sender `" ++ show s ++ "'")
-                           s
-                           (senderIxMap v)
-
-receiverIndex :: ReceiverId -> Vars -> Int
-receiverIndex r v =
-    IntMap.findWithDefault (error $ "unknown receiver `" ++ show r ++ "'")
-                           r
-                           (receiverIxMap v)
-
-senders :: Vars -> [SenderId]
-senders v = IntMap.keys (senderIxMap v)
-
-receivers :: Vars -> [ReceiverId]
-receivers v = IntMap.keys (receiverIxMap v)
-
 senderCount :: Vars -> Int
-senderCount = (snd . dimMatrix . senderMatrix)
+senderCount = Indices.size . senderIndices
 
 receiverCount :: Vars -> Int
-receiverCount = (snd . dimMatrix . receiverMatrix)
+receiverCount = Indices.size . receiverIndices
+
+senderIndex :: Vars -> SenderId -> Int
+senderIndex v s =
+    Indices.findWithDefault (error $ "unknown sender `" ++ show s ++ "'")
+                            s (senderIndices v)
+
+receiverIndex :: Vars -> ReceiverId -> Int
+receiverIndex v r =
+    Indices.findWithDefault (error $ "unknown receiver `" ++ show r ++ "'")
+                            r (receiverIndices v)
+
+senders :: Vars -> [SenderId]
+senders = Indices.keys . senderIndices
+
+receivers :: Vars -> [ReceiverId]
+receivers = Indices.keys . receiverIndices
+
+validReceiver ::  Vars -> ReceiverId -> Bool
+validReceiver v r = Indices.member r (receiverIndices v)
+
+validSender ::  Vars -> SenderId -> Bool
+validSender v s = Indices.member s (senderIndices v)
+
+
 
 weightReceiverBy :: [(ReceiverId, Double)] -> Vars -> History -> SenderId -> Vector Double
 weightReceiverBy rws v h s = let
     w = runVector $ do
             mw <- newVector (receiverCount v) 0
             forM_ rws $ \(r,wt) ->
-                modifyVector mw (receiverIndex r v) (wt+)
+                modifyVector mw (receiverIndex v r) (wt+)
             return mw
     y = mulMatrixVector NoTrans (receiverMatrix v) w
-    x = colMatrix (senderMatrix v) (senderIndex s v)
+    x = colMatrix (senderMatrix v) (senderIndex v s)
     in concatVectors 
            [ accumVector (+) (constantVector (dynamicDim v) 0) $
-                 [ (i, atVector w (receiverIndex r v) * d)
+                 [ (i, atVector w (receiverIndex v r) * d)
                  | (r, ds) <- senderChanges v h s
                  , (i, d) <- ds
                  ]
@@ -124,10 +130,10 @@ weightReceiverChangesBy rws v h s = let
     w = runVector $ do
             mw <- newVector (receiverCount v) 0
             forM_ rws $ \(r,wt) ->
-                unsafeModifyVector mw (receiverIndex r v) (wt+)
+                unsafeModifyVector mw (receiverIndex v r) (wt+)
             return mw
     
-    weight r = unsafeAtVector w (receiverIndex r v)
+    weight r = unsafeAtVector w (receiverIndex v r)
     
     in filter ((/= 0) . snd) $ assocsVector $ 
            accumVector (+) (constantVector (dynamicDim v) 0) $
@@ -143,13 +149,13 @@ mulSenderBy beta v h s
         beta1 = dropVector (dynamicDim v) beta
         beta1_mat = matrixViewVector (staticMatrixDim v) beta1
         
-        x = colMatrix (senderMatrix v) (senderIndex s v)
+        x = colMatrix (senderMatrix v) (senderIndex v s)
         xt_beta1 = mulMatrixVector Trans beta1_mat x
         z = runVector $ do
                  mz <- newVector_ (receiverCount v)
                  mulMatrixToVector Trans (receiverMatrix v) xt_beta1 mz
                  forM_ (mulSenderChangesBy beta v h s) $ \(r,z1) ->
-                     unsafeModifyVector mz (receiverIndex r v) (z1+)
+                     unsafeModifyVector mz (receiverIndex v r) (z1+)
                  return mz
         in zip (receivers v) (elemsVector z)
 
@@ -169,8 +175,8 @@ mulDyadBy beta v h s r
         beta1 = dropVector (dynamicDim v) beta
         beta1_mat = matrixViewVector (staticMatrixDim v) beta1
         
-        x = colMatrix (senderMatrix v) (senderIndex s v)
-        y = colMatrix (receiverMatrix v) (receiverIndex r v)
+        x = colMatrix (senderMatrix v) (senderIndex v s)
+        y = colMatrix (receiverMatrix v) (receiverIndex v r)
         xt_beta1 = mulMatrixVector Trans beta1_mat x
         z0 = dotVector y xt_beta1
 
@@ -198,11 +204,10 @@ senderChanges v h s | History.null h = []
                 Nothing -> Nothing
                 Just i' -> Just (r, [receive i'])
           | (r,dt') <- EventSet.past $ History.lookupReceiver s h
-          , IntSet.member r rset 
+          , validReceiver v r
           ]
         ]
   where
-    rset = receiverSet v
     sint = sendIntervals v
     rint = receiveIntervals v
     send    i  = (i, 1)
@@ -233,8 +238,8 @@ sender v h s = [ (r, dyad v h s r) | r <- receivers v ]
 
 dyad :: Vars -> History -> SenderId -> ReceiverId -> Vector Double
 dyad v h s r = let
-    x = colMatrix (senderMatrix v) (senderIndex s v)
-    y = colMatrix (receiverMatrix v) (receiverIndex r v)
+    x = colMatrix (senderMatrix v) (senderIndex v s)
+    y = colMatrix (receiverMatrix v) (receiverIndex v r)
     delta = dyadChanges v h s r
     in concatVectors [ accumVector (+) (constantVector (dynamicDim v) 0) delta
                      , kroneckerVector y x
