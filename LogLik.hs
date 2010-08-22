@@ -208,7 +208,7 @@ union (LogLik m c1 sll1) (LogLik _ c2 sll2) =
 
 singleton :: Model -> (Message, History) -> LogLik
 singleton m (Message s rs, h) =
-    LogLik m (length rs) $ Map.singleton 1 $ singletonSLL m s (rs,h)
+    LogLik m (length rs) $ Map.singleton s $ singletonSLL m s (rs,h)
 
 insert :: (Message, History) -> LogLik -> LogLik
 insert msg ll =
