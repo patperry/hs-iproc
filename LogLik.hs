@@ -22,10 +22,9 @@ import Data.Map( Map )
 import qualified Data.Map as Map
 import Numeric.LinearAlgebra
 
-import Actor( ReceiverId, SenderId )
 import History( History )
-import Message( Message(..) )
 import Model( Model )
+import Types( ReceiverId, SenderId, Message(..) )
 import qualified History as History
 import qualified Model as Model
 import qualified Vars as Vars

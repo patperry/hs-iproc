@@ -1,12 +1,9 @@
-{-# LANGUAGE FlexibleInstances, TupleSections #-}
 module Main
     where
 
 import Control.Arrow( second )
 import Control.Monad( replicateM )
 import Data.AEq( AEq(..) )
-import Data.Time
-import Data.Time.Clock.POSIX( posixSecondsToUTCTime )
 import Data.Function( on )
 import Data.List( foldl', foldl1', nub, nubBy, sort, maximumBy )
 import Data.Map( Map )
@@ -22,13 +19,13 @@ import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.LinearAlgebra as Test
 import Numeric.LinearAlgebra
 
-import Actor( Actor(..), ActorId, SenderId, ReceiverId )
-import Message( Message(..) )
 import History( History )
 import EventSet( EventSet )
 import Intervals( Intervals )
 import LogLik( LogLik )
 import Model( Model )
+import Types( Actor(..), ActorId, SenderId, ReceiverId, Message(..),
+    Time, DiffTime, posixSecondsToTime, addTime )
 import Vars( Vars )
 
 import qualified History as History
@@ -49,13 +46,13 @@ verboseAEq a b | a ~== b = True
 
 
 -- | Times are in [Jan 1, 1970, Feb 1, 1970)
-instance Arbitrary UTCTime where
+instance Arbitrary Time where
     arbitrary = do
         n <- choose (0, 31 * 24 * 3600 - 1) :: Gen Int
-        return $ posixSecondsToUTCTime $ fromIntegral n
+        return $ posixSecondsToTime $ fromIntegral n
 
 -- | DiffTimes are between 0 secs and 1 week
-instance Arbitrary NominalDiffTime where
+instance Arbitrary DiffTime where
     arbitrary = do
         secs <- oneof [ choose (0, 7 * 24 * 3600)
                       , choose (0, 24 * 3600)
@@ -65,14 +62,14 @@ instance Arbitrary NominalDiffTime where
         return $ fromIntegral secs
 
 -- | Intervals are between 1 sec and ~6 days
-data IntervalList = IntervalList [NominalDiffTime] deriving (Show)
+data IntervalList = IntervalList [DiffTime] deriving (Show)
 instance Arbitrary IntervalList where
     arbitrary = do
         l <- choose (1,5)
         ts <- replicateM l $ elements $ map (fromIntegral . (2^)) [ 0..19 ]
         return $ IntervalList $ nub $ sort ts
 
-data NonEmptyIntervalList = NonEmptyIntervalList [NominalDiffTime] deriving (Show)
+data NonEmptyIntervalList = NonEmptyIntervalList [DiffTime] deriving (Show)
 instance Arbitrary NonEmptyIntervalList where
     arbitrary = do
         t <- (succ . abs) `fmap` arbitrary
@@ -90,7 +87,7 @@ instance Arbitrary NonEmptyIntervals where
         (NonEmptyIntervalList ts) <- arbitrary
         return $ NonEmptyIntervals $ Intervals.fromList ts
 
-data UpdateEventSet e = EventSetAdvance NominalDiffTime
+data UpdateEventSet e = EventSetAdvance DiffTime
                       | EventSetInsert e
     deriving (Show)
     
@@ -155,7 +152,7 @@ history :: [SenderId] -> [ReceiverId] -> Gen History
 history ss rs = do
     ms <- messages ss rs
     t0 <- arbitrary
-    ts <- (sort . map (`addUTCTime` t0)) `fmap` replicateM (length ms) arbitrary
+    ts <- (sort . map (`addTime` t0)) `fmap` replicateM (length ms) arbitrary
     let ((_,h),_) = History.accum (t0, History.empty) $ zip ts ms
     return h
 

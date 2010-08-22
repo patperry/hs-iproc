@@ -7,15 +7,12 @@ import qualified Data.Map as Map
 import Database.HDBC
 import Database.HDBC.Sqlite3
         
-import Data.Time
-import Data.Time.Clock.POSIX
 import Numeric.LinearAlgebra
        
         
-import Actor
 import Enron
 import Intervals( Intervals )
-import Message
+import Types
 
 import qualified Intervals as Intervals
 import qualified History as History
@@ -24,7 +21,7 @@ import qualified LogLik as LogLik
 import qualified Vars as Vars
 
      
-fromEmail :: Email -> (UTCTime, Message)
+fromEmail :: Email -> (Time, Message)
 fromEmail (Email _ _ time _ f ts) =
     (time, Message f ts)
 
@@ -75,7 +72,7 @@ main = do
     as <- (Map.fromList . map fromEmployee) `fmap` fetchEmployeeList conn
     tms <- as `seq` (map fromEmail `fmap` fetchEmailList conn)
     let v = Vars.fromActors as as sendIntervals receiveIntervals
-        t0 = if null tms then posixSecondsToUTCTime 0
+        t0 = if null tms then posixSecondsToTime 0
                          else (fst . head) tms
         h0 = History.empty
         tmhs = snd $ History.accum (t0,h0) tms

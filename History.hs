@@ -20,19 +20,17 @@ import Data.List( foldl', mapAccumL )
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Data.Maybe( fromMaybe )
-import Data.Time
 
-import Actor
 import EventSet( EventSet )
 import qualified EventSet as EventSet
-import Message
+import Types
 
-type Time = NominalDiffTime
+type LocalTime = DiffTime
 
 data History =
-    History { currentTime :: !Time
-            , senderMap :: !(Map SenderId (Time, EventSet ReceiverId))
-            , receiverMap :: !(Map ReceiverId (Time, EventSet SenderId))
+    History { currentTime :: !LocalTime
+            , senderMap :: !(Map SenderId (LocalTime, EventSet ReceiverId))
+            , receiverMap :: !(Map ReceiverId (LocalTime, EventSet SenderId))
             }
     deriving (Eq, Show)
 
@@ -42,7 +40,7 @@ null (History t sm rm) = t == 0 || (Map.null sm && Map.null rm)
 empty :: History
 empty = History 0 Map.empty Map.empty
           
-advance :: NominalDiffTime -> History -> History
+advance :: DiffTime -> History -> History
 advance dt h | dt == 0 = h
              | dt < 0 = error "negative time difference"
              | otherwise = h{ currentTime = currentTime h + dt }
@@ -76,11 +74,11 @@ lookupReceiver r (History t _ rm) =
         (t0,es0) <- Map.lookup r rm
         return $ EventSet.advance (t-t0) es0
 
-accum :: (UTCTime, History)
-      -> [(UTCTime, Message)]
-      -> ((UTCTime, History), [(UTCTime, Message, History)])
+accum :: (Time, History)
+      -> [(Time, Message)]
+      -> ((Time, History), [(Time, Message, History)])
 accum =
     mapAccumL (\(t0,h0) (t,m) -> 
-            let h  = advance (t `diffUTCTime` t0) h0
+            let h  = advance (t `diffTime` t0) h0
                 h' = insert m h
             in ((t,h'), (t,m,h)))

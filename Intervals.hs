@@ -1,6 +1,5 @@
 module Intervals (
     Intervals,
-    IntervalId,
     
     size,
     at,
@@ -15,23 +14,22 @@ module Intervals (
 import Prelude hiding ( lookup )
 
 import Data.List( findIndex, nub, sort )
-import Data.Time
+import Types( DiffTime )
 
 
-type IntervalId = Int
-data Intervals = Intervals !Int ![NominalDiffTime] deriving (Eq)
+data Intervals = Intervals !Int ![DiffTime] deriving (Eq)
 
 empty :: Intervals
 empty = fromList []
 
-fromList :: [NominalDiffTime] -> Intervals
+fromList :: [DiffTime] -> Intervals
 fromList ts | sort ts /= ts = error "time interval list is not sorted"
             | nub ts /= ts = error "time interval list is not unique"
             | any (<= 0) ts = error "non-positive time interval"
             | otherwise =
         Intervals (length ts) ts
 
-toList :: Intervals -> [NominalDiffTime]
+toList :: Intervals -> [DiffTime]
 toList (Intervals _ ts) = ts
 
 instance Show Intervals where
@@ -41,15 +39,15 @@ instance Show Intervals where
 size :: Intervals -> Int
 size (Intervals n _) = n
 
-at :: IntervalId -> Intervals -> NominalDiffTime
+at :: Int -> Intervals -> DiffTime
 at i (Intervals _ ts) = ts !! i
 
-lookup ::  NominalDiffTime -> Intervals -> Maybe IntervalId
+lookup ::  DiffTime -> Intervals -> Maybe Int
 lookup t (Intervals _ ts) | t <= 0 = Nothing
                           | otherwise = do
     i <- findIndex (>= t) $ 0:ts
     return $ pred i
     
-assocs :: Intervals -> [(IntervalId,NominalDiffTime)]
+assocs :: Intervals -> [(Int,DiffTime)]
 assocs (Intervals _ ts) = zip [ 0.. ] ts
 

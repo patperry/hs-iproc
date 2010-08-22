@@ -37,8 +37,8 @@ import Data.Map( Map )
 import qualified Data.Map as Map
 import Numeric.LinearAlgebra
 
-import Actor( SenderId, ReceiverId )
 import History( History )
+import Types( SenderId, ReceiverId )
 import Vars( Vars )
 import qualified History as History
 

@@ -32,11 +32,11 @@ import qualified Data.Set as Set
 import Data.Maybe( catMaybes )
 import Numeric.LinearAlgebra
 
-import Actor
-import qualified EventSet as EventSet
 import History( History )
-import qualified History as History
 import Intervals( Intervals )
+import Types
+import qualified EventSet as EventSet
+import qualified History as History
 import qualified Intervals as Intervals
 
         

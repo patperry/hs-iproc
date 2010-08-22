@@ -11,9 +11,8 @@ module Enron (
     ) where
         
 import Control.Applicative
-import Data.Time.Clock
-import Data.Time.Clock.POSIX
 import Database.HDBC
+import Types( Time, DiffTime, posixSecondsToTime )
 
 
 type EmployeeId = Int
@@ -36,7 +35,7 @@ type EmailId = Int
 data Email =
     Email { emailId :: !EmailId
           , emailFilename :: !String
-          , emailTime :: !UTCTime
+          , emailTime :: !Time
           , emailSubject :: !String
           , emailFrom :: !EmployeeId
           , emailToList :: ![EmployeeId]
@@ -118,9 +117,12 @@ fetchEmailList conn = do
                ] =
         Email { emailId = fromSql mid
               , emailFilename = fromSql filename
-              , emailTime = posixSecondsToUTCTime $ fromSql unix_time
+              , emailTime = posixSecondsToTime $ fromInt $ fromSql unix_time
               , emailSubject = fromSql subject
               , emailFrom = fromSql from_eid
               , emailToList = [fromSql to_eid]
               }
     parseEmail _ = error "parseEmail: pattern match failure"
+
+    fromInt :: Int -> DiffTime
+    fromInt = fromIntegral

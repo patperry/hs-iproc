@@ -34,8 +34,8 @@ module ModelBase (
 import Data.List( foldl' )
 import Numeric.LinearAlgebra
 
-import Actor( SenderId, ReceiverId )
 import History( History )
+import Types( SenderId, ReceiverId )
 import Vars( Vars )
 import qualified Vars as Vars
 

@@ -18,10 +18,10 @@ import Data.Map( Map )
 import qualified Data.Map as Map
 import Data.Set( Set )
 import qualified Data.Set as Set
-import Data.Time
+import Types( DiffTime )
 
 data EventSet e = 
-    EventSet { pastEventMap :: !(Map e NominalDiffTime)
+    EventSet { pastEventMap :: !(Map e DiffTime)
              , currentEventSet :: !(Set e)
              } deriving (Eq, Show)
 
@@ -36,16 +36,16 @@ insert e (EventSet p c) = let
     c' = Set.insert e c
     in EventSet p c'
 
-lookup :: (Ord e) => e -> EventSet e -> Maybe NominalDiffTime
+lookup :: (Ord e) => e -> EventSet e -> Maybe DiffTime
 lookup e h = Map.lookup e (pastEventMap h)
 
 current :: EventSet e -> [e]
 current = Set.elems . currentEventSet
 
-past :: EventSet e -> [(e, NominalDiffTime)]
+past :: EventSet e -> [(e, DiffTime)]
 past = Map.assocs . pastEventMap
 
-advance :: (Ord e) => NominalDiffTime -> EventSet e -> EventSet e
+advance :: (Ord e) => DiffTime -> EventSet e -> EventSet e
 advance dt es@(EventSet p c) | dt == 0 = es
                              | dt < 0 = error "negative time difference"
                              | otherwise = let
