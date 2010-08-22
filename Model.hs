@@ -1,3 +1,4 @@
+{-# LANGUAGE ForeignFunctionInterface #-}
 module Model (
     Model,
     Loops(..),
@@ -22,6 +23,7 @@ module Model (
     logSumWeights,
 
     prob,
+    logProb,
     probs,
     meanVars,
     covVars,
@@ -81,11 +83,29 @@ logWeightChange m h s r | not (validDyad m s r) = 0
     Vars.mulDyadChangesBy (coefs m) (vars m) h s r
 
 sumWeights :: Model -> History -> SenderId -> Double
-sumWeights m h s =
-    foldl' (+) 0 $ (snd . unzip) (weights m h s)
+sumWeights m h s = exp (logSumWeights m h s)
 
 logSumWeights :: Model -> History -> SenderId -> Double
-logSumWeights m h s = log $ sumWeights m h s
+logSumWeights m h s = let
+    (lw_max, nlp_max) = logSumWeightsParts m h s
+    in lw_max + nlp_max
+
+logSumWeightsParts :: Model -> History -> SenderId -> (Double, Double)
+logSumWeightsParts m h s = let
+    lws = (snd . unzip) $ logWeights m h s
+    ilws = zip [ 0..] lws
+    (i_max,lw_max) = foldl' maxPair (0,neginf) ilws
+    nlp_max = log1p (foldl' (+) 0 [ exp (lw - lw_max)
+                                  | (i,lw) <- ilws, i /= i_max ])
+    in (lw_max, nlp_max)
+  where
+    maxPair (i1,e1) (i2,e2) =
+        let (i,e) = if e2 > e1 then (i2,e2) else (i1,e1)
+        in i `seq` e `seq` (i,e)
+    neginf = -1/0 :: Double
+
+foreign import ccall unsafe
+    log1p :: Double -> Double
 
 weights :: Model -> History -> SenderId -> [(ReceiverId, Double)]
 weights m h s = [ (r, exp lw) | (r,lw) <- logWeights m h s ]
@@ -101,15 +121,15 @@ logWeightChanges m h s =
         Vars.mulSenderChangesBy (coefs m) (vars m) h s
 
 prob :: Model -> History -> SenderId -> ReceiverId -> Double
-prob m h s r = let
-    lws = snd $ unzip $ logWeights m h s
-    lw_max = foldl' max neginf lws
-    w_sum = foldl' (+) 0 [ exp (lw - lw_max) | lw <- lws ]
-    in if w_sum == 0
-           then 0
-           else min 1 $ exp (logWeight m h s r - lw_max) / w_sum
-  where
-    neginf = -1/0 :: Double 
+prob m h s r = exp (logProb m h s r)
+
+logProb :: Model -> History -> SenderId -> ReceiverId -> Double
+logProb m h s r = let
+    lw = logWeight m h s r
+    (lw_max, nlp_max) = logSumWeightsParts m h s
+    in if lw == lw_max
+            then -nlp_max
+            else (lw - nlp_max) - lw_max
 
 probs :: Model -> History -> SenderId -> [(ReceiverId, Double)]
 probs m h s = let
