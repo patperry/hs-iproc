@@ -25,6 +25,7 @@ module Model (
     prob,
     logProb,
     probs,
+    logProbs,
     meanVars,
     covVars,
     ) where
@@ -121,7 +122,7 @@ logWeightChanges m h s =
         Vars.mulSenderChangesBy (coefs m) (vars m) h s
 
 prob :: Model -> History -> SenderId -> ReceiverId -> Double
-prob m h s r = exp (logProb m h s r)
+prob m h s r = min 1 $ exp (logProb m h s r)
 
 logProb :: Model -> History -> SenderId -> ReceiverId -> Double
 logProb m h s r = let
@@ -129,19 +130,20 @@ logProb m h s r = let
     (lw_max, nlp_max) = logSumWeightsParts m h s
     in if lw == lw_max
             then -nlp_max
-            else (lw - nlp_max) - lw_max
+            else (lw - lw_max) - nlp_max
 
 probs :: Model -> History -> SenderId -> [(ReceiverId, Double)]
-probs m h s = let
+probs m h s = [ (r, min 1 $ exp lp) | (r,lp) <- logProbs m h s ]
+
+logProbs :: Model -> History -> SenderId -> [(ReceiverId, Double)]
+logProbs m h s = let
     rlws = logWeights m h s
-    lws = snd $ unzip rlws
-    lw_max = foldl' max neginf lws
-    rws = [ (r, exp (lw - lw_max)) | (r, lw) <- rlws ]
-    w_sum = foldl' (+) 0 (snd $ unzip rws)
-    in if w_sum == 0 then rws
-                     else [ (r, w / w_sum) | (r,w) <- rws ]
-  where
-    neginf = -1/0 :: Double
+    (lw_max, nlp_max) = logSumWeightsParts m h s
+    in [ (r, if lw == lw_max
+                 then -nlp_max
+                 else (lw - lw_max) - nlp_max)
+       | (r,lw) <- rlws
+       ]
 
 meanVars :: Model -> History -> SenderId -> Vector Double
 meanVars m h s = fst $ meanCovVars m h s
