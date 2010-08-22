@@ -39,13 +39,13 @@ fromEmployee (Employee eid _ _ _ g s d) =
 
 sendIntervals :: Intervals
 sendIntervals = Intervals.fromList $
-    map (fromIntegral . (3600*) . ((2::Int)^)) $    
-        ([ -7..2 ] ++ [ 4..13 ] :: [Int])
+    map (fromIntegral . floor . (3600*) . (2^^)) $    
+        [ -7..2 ] ++ [ 4..13 ]
 
 receiveIntervals :: Intervals
 receiveIntervals = Intervals.fromList $
-    map (fromIntegral . (3600*) . ((2::Int)^)) $
-        ([ -7..11 ] :: [Int])
+    map (fromIntegral . floor . (3600*) . (2^^)) $
+        [ -7..11 ]
 
 {-
 fromEmployee :: Employee -> (ActorId, Actor)
