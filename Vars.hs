@@ -25,11 +25,13 @@ module Vars (
 
 import Control.Monad( forM_ )
 import Data.List( foldl' )
+import Data.IntMap( IntMap )
+import qualified Data.IntMap as IntMap
 import Data.Map( Map )
 import qualified Data.Map as Map
-import Data.Set( Set )
-import qualified Data.Set as Set
 import Data.Maybe( catMaybes )
+import Data.IntSet( IntSet )
+import qualified Data.IntSet as IntSet
 import Numeric.LinearAlgebra
 
 import History( History )
@@ -42,9 +44,9 @@ import qualified Intervals as Intervals
         
 data Vars = 
     Vars { dim :: !Int
-         , senderIxMap :: !(Map SenderId Int)
-         , receiverIxMap :: !(Map ReceiverId Int)
-         , receiverSet :: !(Set ReceiverId)
+         , senderIxMap :: !(IntMap Int)
+         , receiverIxMap :: !(IntMap Int)
+         , receiverSet :: !IntSet
          , senderMatrix :: !(Matrix Double)
          , receiverMatrix :: !(Matrix Double)
          , sendIntervals :: !Intervals
@@ -62,9 +64,9 @@ fromActors sm rm sint rint
     | Map.null sm = error "no senders"
     | Map.null rm = error "no receivers"
     | otherwise = let
-        sim = Map.fromAscList $ zip (Map.keys sm) [ 0.. ]
-        rim = Map.fromAscList $ zip (Map.keys rm) [ 0.. ]
-        rs = Map.keysSet rim
+        sim = IntMap.fromAscList $ zip (Map.keys sm) [ 0.. ]
+        rim = IntMap.fromAscList $ zip (Map.keys rm) [ 0.. ]
+        rs = IntMap.keysSet rim
         ssd = (dimVector . snd . Map.findMin) sm
         srd = (dimVector . snd . Map.findMin) rm
         smat = colListMatrix (ssd, Map.size sm) $ Map.elems sm
@@ -77,21 +79,21 @@ fromActors sm rm sint rint
 
 senderIndex :: SenderId -> Vars -> Int
 senderIndex s v =
-    Map.findWithDefault (error $ "unknown sender `" ++ show s ++ "'")
-                        s
-                        (senderIxMap v)
+    IntMap.findWithDefault (error $ "unknown sender `" ++ show s ++ "'")
+                           s
+                           (senderIxMap v)
 
 receiverIndex :: ReceiverId -> Vars -> Int
 receiverIndex r v =
-    Map.findWithDefault (error $ "unknown receiver `" ++ show r ++ "'")
-                        r
-                        (receiverIxMap v)
+    IntMap.findWithDefault (error $ "unknown receiver `" ++ show r ++ "'")
+                           r
+                           (receiverIxMap v)
 
 senders :: Vars -> [SenderId]
-senders v = Map.keys (senderIxMap v)
+senders v = IntMap.keys (senderIxMap v)
 
 receivers :: Vars -> [ReceiverId]
-receivers v = Map.keys (receiverIxMap v)
+receivers v = IntMap.keys (receiverIxMap v)
 
 senderCount :: Vars -> Int
 senderCount = (snd . dimMatrix . senderMatrix)
@@ -122,11 +124,14 @@ weightReceiverChangesBy rws v h s = let
     w = runVector $ do
             mw <- newVector (receiverCount v) 0
             forM_ rws $ \(r,wt) ->
-                modifyVector mw (receiverIndex r v) (wt+)
+                unsafeModifyVector mw (receiverIndex r v) (wt+)
             return mw
+    
+    weight r = unsafeAtVector w (receiverIndex r v)
+    
     in filter ((/= 0) . snd) $ assocsVector $ 
            accumVector (+) (constantVector (dynamicDim v) 0) $
-               [ (i, atVector w (receiverIndex r v) * d)
+               [ (i, weight r * d)
                | (r, ds) <- senderChanges v h s
                , (i, d) <- ds
                ]
@@ -181,7 +186,6 @@ mulDyadChangesBy beta v h s r
     delta = dyadChanges v h
 
 senderChanges :: Vars -> History -> SenderId -> [(ReceiverId, [(Int,Double)])]
--- senderChanges v h s = filter (not . null . snd) [ (r, dyadChanges v h s r) | r <- receivers v ]
 senderChanges v h s | History.null h = []
                     | otherwise =
     Map.assocs $ Map.unionsWith (++) $ map (Map.fromList . catMaybes)
@@ -194,7 +198,7 @@ senderChanges v h s | History.null h = []
                 Nothing -> Nothing
                 Just i' -> Just (r, [receive i'])
           | (r,dt') <- EventSet.past $ History.lookupReceiver s h
-          , Set.member r rset 
+          , IntSet.member r rset 
           ]
         ]
   where
