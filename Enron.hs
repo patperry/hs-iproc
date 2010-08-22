@@ -6,8 +6,8 @@ module Enron (
     
     Email(..),
     
-    fetchEmployeeList',
-    fetchEmailList',
+    fetchEmployeeList,
+    fetchEmailList,
     ) where
         
 import Control.Applicative
@@ -39,7 +39,7 @@ data Employee =
 type EmailId = Int
 data Email =
     Email { emailId :: !EmailId
-          , emaileFilename :: !String
+          , emailFilename :: !String
           , emailTime :: !UTCTime
           , emailSubject :: !String
           , emailFrom :: !EmployeeId
@@ -47,10 +47,10 @@ data Email =
           }
         deriving (Eq, Show)
 
-fetchEmployeeList' :: (IConnection conn) => conn -> IO [Employee]
-fetchEmployeeList' conn = do
+fetchEmployeeList :: (IConnection conn) => conn -> IO [Employee]
+fetchEmployeeList conn = do
     map parseEmployee <$>
-        quickQuery' conn (
+        quickQuery conn (
             " SELECT\
             \     eid,\
             \     name,\
@@ -71,59 +71,58 @@ fetchEmployeeList' conn = do
                   , seniority
                   , department
                   ] =
-        Employee (fromSql eid)
-                 (fromSql name)
-                 (fromSql longdepartment)
-                 (fromSql title)
-                 (read $ fromSql gender)
-                 (read $ fromSql seniority)
-                 (read $ fromSql department)
+        Employee { employeeId = fromSql eid
+                 , employeeName = fromSql name
+                 , employeeLongDepartment = fromSql longdepartment
+                 , employeeTitle = fromSql title
+                 , employeeGender = read $ fromSql gender
+                 , employeeSeniority = read $ fromSql seniority
+                 , employeeDepartment = read $ fromSql department
+                 }
 
-fetchRecipientMap' :: (IConnection conn)
-                   => conn -> IO (Map EmailId [EmployeeId])
-fetchRecipientMap' conn = do
-    rcps <- map parseRecipient  <$>
-                quickQuery' conn (
-                    " SELECT\
-                    \     mid,\
-                    \     to_eid\
-                    \ FROM\
-                    \     Recipient\
-                    \ ") []
-    return $ foldr (\(mid,to) -> to `seq` Map.insertWith' (++) mid [to])
-                   Map.empty rcps
-  where
-    parseRecipient [ mid, to_eid ] =
-        (fromSql mid, fromSql to_eid)
 
-fetchEmailList' :: (IConnection conn)
-                => conn -> IO [Email]
-fetchEmailList' conn = do
-    rmap <- fetchRecipientMap' conn
-    let tos mid = Map.findWithDefault [] mid rmap
-                
-    msgs <- map (parseEmail tos) <$>
-                quickQuery' conn (
+fetchEmailList :: (IConnection conn) => conn -> IO [Email]
+fetchEmailList conn = do
+    msgs <- aggregate <$>
+                quickQuery conn (
                     " SELECT\
-                    \     mid,\
-                    \     filename,\
-                    \     unix_time,\
-                    \     subject,\
-                    \     from_eid\
+                    \     R.mid,\
+                    \     R.to_eid,\
+                    \     M.filename,\
+                    \     M.unix_time,\
+                    \     M.subject,\
+                    \     M.from_eid\
                     \ FROM\
-                    \     Message\
+                    \     Message M,\
+                    \     Recipient R\
+                    \ WHERE\
+                    \     M.mid = R.mid\
+                    \ ORDER BY\
+                    \     M.unix_time\
                     \ ") []
     return msgs
   where
-    parseEmail tos [ mid
-                   , filename
-                   , unix_time
-                   , subject
-                   , from_eid
-                   ] =
-        Email (fromSql mid)
-              (fromSql filename)
-              (posixSecondsToUTCTime $ fromSql unix_time)
-              (fromSql subject)
-              (fromSql from_eid)
-              (tos $ fromSql mid)
+    aggregate [] = []
+    aggregate (row:rows) = aggregateWith (parseEmail row) rows
+    
+    aggregateWith e [] = [e]
+    aggregateWith e raw@(row:rows) = case row of
+        mid:t:_ | emailId e == fromSql mid ->
+                      let e' = e{ emailToList = emailToList e ++ [ fromSql t]}
+                      in aggregateWith e' rows
+        _ -> e:(aggregate raw)
+    
+    parseEmail [ mid
+               , to_eid
+               , filename
+               , unix_time
+               , subject
+               , from_eid
+               ] =
+        Email { emailId = fromSql mid
+              , emailFilename = fromSql filename
+              , emailTime = posixSecondsToUTCTime $ fromSql unix_time
+              , emailSubject = fromSql subject
+              , emailFrom = fromSql from_eid
+              , emailToList = [fromSql to_eid]
+              }

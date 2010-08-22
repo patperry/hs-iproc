@@ -72,8 +72,8 @@ receiveIntervals = Intervals.fromList $
         
 main = do
     conn <- connectSqlite3 "enron.db"
-    as <- (Map.fromList . map fromEmployee) `fmap` fetchEmployeeList' conn
-    tms <- map fromEmail `fmap` fetchEmailList' conn
+    as <- (Map.fromList . map fromEmployee) `fmap` fetchEmployeeList conn
+    tms <- as `seq` (map fromEmail `fmap` fetchEmailList conn)
     let v = Vars.fromActors as as sendIntervals receiveIntervals
         t0 = if null tms then posixSecondsToUTCTime 0
                          else (fst . head) tms
