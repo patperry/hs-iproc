@@ -13,30 +13,30 @@ import Numeric.LinearAlgebra
        
         
 import Actor
-import qualified History as History
-import qualified DVars as DVars
 import Enron
 import Intervals( Intervals )
-import qualified Intervals as Intervals
-import qualified LogLik as LogLik
 import Message
-import Params( defaultParams )
-import qualified SVars as SVars
-import qualified Summary as Summary
+
+import qualified Intervals as Intervals
+import qualified History as History
+import qualified Model as Model
+import qualified LogLik as LogLik
+import qualified Vars as Vars
 
      
 fromEmail :: Email -> (UTCTime, Message)
 fromEmail (Email _ _ time _ f ts) =
     (time, Message f ts)
 
-fromEmployee :: Employee -> (ActorId, Actor)
+fromEmployee :: Employee -> (ActorId, Vector Double)
 fromEmployee (Employee eid _ _ _ g s d) =
     let f = if g == Female then 1 else 0
         j = if s == Junior then 1 else 0
         l = if d == Legal then 1 else 0
         t = if d == Trading then 1 else 0
-    in (eid, Actor $ listVector 12
-        [ 1, f, j, l, t, f*j, f*l, f*t, j*l, j*t, f*j*l, f*j*t ])
+    in (eid, 
+        listVector 12
+            [ 1, f, j, l, t, f*j, f*l, f*t, j*l, j*t, f*j*l, f*j*t ])
 
 sendIntervals :: Intervals
 sendIntervals = Intervals.fromList $
@@ -74,15 +74,15 @@ main = do
     conn <- connectSqlite3 "enron.db"
     as <- (Map.fromList . map fromEmployee) `fmap` fetchEmployeeList' conn
     tms <- map fromEmail `fmap` fetchEmailList' conn
-    let sv = SVars.fromActors as as
-        dv = DVars.fromIntervals sendIntervals receiveIntervals 
+    let v = Vars.fromActors as as sendIntervals receiveIntervals
         t0 = if null tms then posixSecondsToUTCTime 0
                          else (fst . head) tms
-        h0 = DVars.history t0 dv
-        cms = snd $ History.accum h0 tms
+        h0 = History.empty
+        tmhs = snd $ History.accum (t0,h0) tms
+        mhs = [ (m,h) | (t,m,h) <- tmhs ]
         --smry = Summary.fromList sv dv cms
-        p = defaultParams sv dv
-        (ll,rs) = mapAccumL (flip LogLik.insert) (LogLik.empty p) cms
+        m = Model.fromVars v (constantVector (Vars.dim v) 0) Model.NoLoops
+        ll = foldl' (flip LogLik.insert) (LogLik.empty m) mhs
         
     -- putStrLn $ "message count: " ++ show (Summary.messageCount smry)
     -- putStrLn $ "summary: " ++ show smry
@@ -93,8 +93,8 @@ main = do
     putStrLn $ "Deviance: " ++ show (LogLik.deviance ll)
     putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)    
     
-    let (score,fisher) = LogLik.fisherWithScore ll
-    putStrLn $ "Score: \n" ++ show score
-    putStrLn $ "Fisher: \n" ++ show fisher
+    -- let (score,fisher) = LogLik.fisherWithScore ll
+    -- putStrLn $ "Score: \n" ++ show score
+    -- putStrLn $ "Fisher: \n" ++ show fisher
     
     disconnect conn
