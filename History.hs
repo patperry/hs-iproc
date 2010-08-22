@@ -59,10 +59,10 @@ insert (Message s rs) (History t sm rm) = let
         in es' `seq` Map.insert x (t,es') m
 
 senders :: History -> [SenderId]
-senders (History _ sm _) = Map.keys sm
+senders h = Map.keys $ senderMap h
 
 receivers :: History -> [ReceiverId]
-receivers (History _ _ rm) = Map.keys rm
+receivers h = Map.keys $ receiverMap h
 
 lookupSender :: SenderId -> History -> EventSet ReceiverId
 lookupSender s (History t sm _) =

@@ -41,7 +41,7 @@ import Actor( SenderId, ReceiverId )
 import History( History )
 import Vars( Vars )
 import qualified History as History
-import qualified Vars as Vars
+
 
 data Model =
     Model { base :: !(Base.Model)
@@ -103,9 +103,9 @@ logWeightChanges :: Model -> History -> SenderId -> [(ReceiverId, Double)]
 logWeightChanges = Base.logWeightChanges . base
 
 prob :: Model -> History -> SenderId -> ReceiverId -> Double
-prob (Model m sps) h s r
-    | History.null h = Map.findWithDefault 0 (s,r) sps
-    | otherwise      = Base.prob m h s r
+prob m h s r
+    | History.null h = Map.findWithDefault 0 (s,r) $ staticProbs m
+    | otherwise      = Base.prob (base m) h s r
 
 logProb :: Model -> History -> SenderId -> ReceiverId -> Double
 logProb = Base.logProb . base

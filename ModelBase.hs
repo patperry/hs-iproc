@@ -32,7 +32,6 @@ module ModelBase (
     ) where
         
 import Data.List( foldl' )
-import qualified Data.Map as Map
 import Numeric.LinearAlgebra
 
 import Actor( SenderId, ReceiverId )
@@ -95,7 +94,7 @@ logSumWeights m h s = let
 logSumWeightsParts :: Model -> History -> SenderId -> (Double, Double)
 logSumWeightsParts m h s = let
     lws = (snd . unzip) $ logWeights m h s
-    ilws = zip [ 0..] lws
+    ilws = zip [ (0::Int)..] lws
     (i_max,lw_max) = foldl' maxPair (0,neginf) ilws
     nlp_max = log1p (foldl' (+) 0 [ exp (lw - lw_max)
                                   | (i,lw) <- ilws, i /= i_max ])

@@ -16,7 +16,6 @@ import Prelude hiding ( lookup, null )
 
 import Data.Map( Map )
 import qualified Data.Map as Map
-import Data.Maybe( listToMaybe )
 import Data.Set( Set )
 import qualified Data.Set as Set
 import Data.Time
@@ -33,9 +32,9 @@ empty :: EventSet e
 empty = EventSet Map.empty Set.empty
 
 insert :: (Ord e) => e -> EventSet e -> EventSet e
-insert e (EventSet past cur) = let
-    cur' = Set.insert e cur
-    in EventSet past cur'
+insert e (EventSet p c) = let
+    c' = Set.insert e c
+    in EventSet p c'
 
 lookup :: (Ord e) => e -> EventSet e -> Maybe NominalDiffTime
 lookup e h = Map.lookup e (pastEventMap h)
@@ -47,9 +46,9 @@ past :: EventSet e -> [(e, NominalDiffTime)]
 past = Map.assocs . pastEventMap
 
 advance :: (Ord e) => NominalDiffTime -> EventSet e -> EventSet e
-advance dt es@(EventSet past cur) | dt == 0 = es
-                                  | dt < 0 = error "negative time difference"
-                                  | otherwise = let
-    past' = Map.map (dt+) past
-    past'' = Set.fold (`Map.insert` dt) past' cur
-    in EventSet past'' Set.empty
+advance dt es@(EventSet p c) | dt == 0 = es
+                             | dt < 0 = error "negative time difference"
+                             | otherwise = let
+    p' = Map.map (dt+) p
+    p'' = Set.fold (`Map.insert` dt) p' c
+    in EventSet p'' Set.empty

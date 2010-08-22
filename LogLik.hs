@@ -87,21 +87,15 @@ expectedReceiverCountsSLL sll =
     rws = receiverWeights sll
     h0 = History.empty
 
-valueSLL :: SenderLogLik -> Double
-valueSLL = fst . valueGradSLL
-
-gradSLL :: SenderLogLik -> Vector Double
-gradSLL = snd . valueGradSLL
-
 valueGradSLL :: SenderLogLik -> (Double, Vector Double)
 valueGradSLL sll =
     let x = observedVarsSLL sll
         mu = expectedVarsSLL sll
         n = fromIntegral $ sendCount sll
         scale = Model.logSumWeights m h0 s
-        value = x `dotVector` beta - (sumLogWeight sll + n * scale)
-        score = x `subVector` mu
-    in value `seq` (value, score)
+        f = x `dotVector` beta - (sumLogWeight sll + n * scale)
+        g = x `subVector` mu
+    in f `seq` (f, g)
   where
     m = senderModel sll
     s = sender sll
@@ -200,7 +194,10 @@ residDf ll =
     nullDf ll - Vars.dim (Model.vars $ model ll)
 
 empty :: Model -> LogLik
-empty m = LogLik m 0 Map.empty
+empty m = LogLik { model = m
+                 , count = 0
+                 , senderLogLik = Map.empty
+                 }
 
 union :: LogLik -> LogLik -> LogLik
 union (LogLik m c1 sll1) (LogLik _ c2 sll2) =

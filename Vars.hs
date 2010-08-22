@@ -6,6 +6,8 @@ module Vars (
     receiveIntervals,
     senders,
     receivers,
+    senderCount,
+    receiverCount,
 
     dyad,
     dyadChanges,
@@ -27,14 +29,14 @@ import Data.Map( Map )
 import qualified Data.Map as Map
 import Data.Set( Set )
 import qualified Data.Set as Set
-import Data.Maybe( catMaybes, maybeToList )
+import Data.Maybe( catMaybes )
 import Numeric.LinearAlgebra
 
 import Actor
 import qualified EventSet as EventSet
 import History( History )
 import qualified History as History
-import Intervals( Intervals, IntervalId )
+import Intervals( Intervals )
 import qualified Intervals as Intervals
 
         

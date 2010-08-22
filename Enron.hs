@@ -11,13 +11,9 @@ module Enron (
     ) where
         
 import Control.Applicative
-import Database.HDBC
-
-import Data.Map( Map )
-import qualified Data.Map as Map
-
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
+import Database.HDBC
 
 
 type EmployeeId = Int
@@ -79,6 +75,7 @@ fetchEmployeeList conn = do
                  , employeeSeniority = read $ fromSql seniority
                  , employeeDepartment = read $ fromSql department
                  }
+    parseEmployee _ = error "parseEmployee: pattern match failure"                 
 
 
 fetchEmailList :: (IConnection conn) => conn -> IO [Email]
@@ -111,7 +108,7 @@ fetchEmailList conn = do
                       let e' = e{ emailToList = emailToList e ++ [ fromSql t]}
                       in aggregateWith e' rows
         _ -> e:(aggregate raw)
-    
+
     parseEmail [ mid
                , to_eid
                , filename
@@ -126,3 +123,4 @@ fetchEmailList conn = do
               , emailFrom = fromSql from_eid
               , emailToList = [fromSql to_eid]
               }
+    parseEmail _ = error "parseEmail: pattern match failure"

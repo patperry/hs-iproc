@@ -1,8 +1,7 @@
 module Main
     where
 
-import Data.List( foldl', mapAccumL )
-import Data.Map( Map )
+import Data.List( foldl' )
 import qualified Data.Map as Map
 import Database.HDBC
 import Database.HDBC.Sqlite3
@@ -40,13 +39,13 @@ fromEmployee (Employee eid _ _ _ g s d) =
 
 sendIntervals :: Intervals
 sendIntervals = Intervals.fromList $
-    map (realToFrac . (3600*) . (2^^)) $    
-        [ -7..2 ] ++ [ 4..13 ]
+    map (fromIntegral . (3600*) . ((2::Int)^)) $    
+        ([ -7..2 ] ++ [ 4..13 ] :: [Int])
 
 receiveIntervals :: Intervals
 receiveIntervals = Intervals.fromList $
-    map (realToFrac . (3600*) . (2^^)) $
-        [ -7..11 ]
+    map (fromIntegral . (3600*) . ((2::Int)^)) $
+        ([ -7..11 ] :: [Int])
 
 {-
 fromEmployee :: Employee -> (ActorId, Actor)
@@ -69,7 +68,7 @@ receiveIntervals = Intervals.fromList $
         [ -1..0 ]
 -}
 
-        
+main :: IO ()        
 main = do
     conn <- connectSqlite3 "enron.db"
     as <- (Map.fromList . map fromEmployee) `fmap` fetchEmployeeList conn
@@ -79,7 +78,7 @@ main = do
                          else (fst . head) tms
         h0 = History.empty
         tmhs = snd $ History.accum (t0,h0) tms
-        mhs = [ (m,h) | (t,m,h) <- tmhs ]
+        mhs = [ (msg,h) | (_,msg,h) <- tmhs ]
         m = Model.fromVars v (constantVector (Vars.dim v) 0) Model.NoLoops
         ll = foldl' (flip LogLik.insert) (LogLik.empty m) mhs
         
