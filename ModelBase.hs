@@ -3,6 +3,7 @@ module ModelBase (
     Model,
     Loops(..),
     fromVars,
+    addStep,
 
     vars,
     coefs,
@@ -54,6 +55,13 @@ fromVars v c l
         error "fromVars: dimension mismatch"
     | otherwise =
         Model v c $ case l of { Loops -> True ; NoLoops -> False }
+
+addStep :: Vector Double -> Model -> Model
+addStep step (Model v c hasLoops)
+    | dimVector step /= dimVector c =
+        error "addStep: dimension mismatch"
+    | otherwise =
+        Model v (addVector step c) hasLoops
 
 validDyad :: Model -> SenderId -> ReceiverId -> Bool
 validDyad m s r | hasLoops m = True

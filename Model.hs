@@ -2,6 +2,7 @@ module Model (
     Model,
     Loops(..),
     fromVars,
+    addStep,
 
     vars,
     coefs,
@@ -49,13 +50,21 @@ data Model =
           }
     deriving (Show)
 
-fromVars :: Vars -> Vector Double -> Loops -> Model
-fromVars v c l = let
-    m = Base.fromVars v c l
+fromBase :: Base.Model -> Model
+fromBase m = let
     h0 = History.empty
     sps = Map.fromList [ ((s,r),p) | s <- Base.senders m
                                    , (r,p) <- Base.probs m h0 s ]
     in Model m sps
+
+fromVars :: Vars -> Vector Double -> Loops -> Model
+fromVars v c l =
+    fromBase $ Base.fromVars v c l
+
+addStep :: Vector Double -> Model -> Model
+addStep step m0 = let
+    m = Base.addStep step (base m0)
+    in fromBase m
 
 vars :: Model -> Vars
 vars = Base.vars . base
