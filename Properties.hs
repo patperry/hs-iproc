@@ -770,7 +770,7 @@ tests_LogLik = testGroup "LogLik"
     ]
     
 prop_LogLik_singleton_value_static (ModelWithMessage m msg) = let
-    val  = LogLik.value (LogLik.insert (msg, h) $ LogLik.empty m)
+    val  = LogLik.value $ LogLik.fromMessages m [(msg,h)]
     val' = sum [ Model.logProb m h s r | r <- rs ]
     in if abs val' > eps
             then val `verboseAEq` val'
@@ -782,7 +782,7 @@ prop_LogLik_singleton_value_static (ModelWithMessage m msg) = let
     eps = 1e-7
 
 prop_LogLik_singleton_value (ModelWithMessageAndHistory m msg h) = let
-    val  = LogLik.value (LogLik.insert (msg, h) $ LogLik.empty m)
+    val  = LogLik.value $ LogLik.fromMessages m [(msg,h)]
     val' = sum [ Model.logProb m h s r | r <- rs ]
     in if abs val' > eps
             then val `verboseAEq` val'
@@ -793,7 +793,7 @@ prop_LogLik_singleton_value (ModelWithMessageAndHistory m msg h) = let
     eps = 1e-7
 
 prop_LogLik_singleton_grad_static (ModelWithMessage m msg) =
-    LogLik.grad (LogLik.insert (msg, h) $ LogLik.empty m)
+    LogLik.grad (LogLik.fromMessages m [(msg,h)])
         ~== sumVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
                                    | r <- rs 
                                    ]
@@ -805,7 +805,7 @@ prop_LogLik_singleton_grad_static (ModelWithMessage m msg) =
     mu = Model.meanVars m h s
 
 prop_LogLik_singleton_grad (ModelWithMessageAndHistory m msg h) =
-    LogLik.grad (LogLik.insert (msg, h) $ LogLik.empty m)
+    LogLik.grad (LogLik.fromMessages m [(msg,h)])
         ~== sumVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
                                    | r <- rs 
                                    ]

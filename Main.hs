@@ -78,7 +78,7 @@ main = do
         tmhs = snd $ History.accum (t0,h0) tms
         mhs = [ (msg,h) | (_,msg,h) <- tmhs ]
         m = Model.fromVars v (constantVector (Vars.dim v) 0) Model.NoLoops
-        ll = foldl' (flip LogLik.insert) (LogLik.empty m) mhs
+        ll = LogLik.fromMessages m mhs
         
     putStrLn $ "Null Deviance: " ++ show (LogLik.nullDeviance ll)
     putStrLn $ "Null Df: " ++ show (LogLik.nullDf ll)    

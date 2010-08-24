@@ -1,7 +1,6 @@
 module LogLik (
     LogLik,
-    empty,
-    insert,
+    fromMessages,
     
     deviance,
     nullDeviance,   
@@ -209,3 +208,7 @@ singleton m (Message s rs, h) =
 insert :: (Message, History) -> LogLik -> LogLik
 insert msg ll =
     union ll $ singleton (model ll) msg
+
+fromMessages :: Model -> [(Message, History)] -> LogLik
+fromMessages m mhs =
+    foldl' (flip LogLik.insert) (LogLik.empty m) mhs
