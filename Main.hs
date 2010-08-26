@@ -72,8 +72,7 @@ main = do
     as <- (Map.fromList . map fromEmployee) `fmap` fetchEmployeeList conn
     tms <- as `seq` (map fromEmail `fmap` fetchEmailList conn)
     let v = Vars.fromActors as as sendIntervals receiveIntervals
-        t0 = if null tms then posixSecondsToTime 0
-                         else (fst . head) tms
+        t0 = (fst . head) tms
         h0 = History.empty
         tmhs = snd $ History.accum (t0,h0) tms
         mhs = [ (msg,h) | (_,msg,h) <- tmhs ]
@@ -85,9 +84,5 @@ main = do
 
     putStrLn $ "Deviance: " ++ show (LogLik.deviance ll)
     putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)    
-    
-    -- let (score,fisher) = LogLik.fisherWithScore ll
-    -- putStrLn $ "Score: \n" ++ show score
-    -- putStrLn $ "Fisher: \n" ++ show fisher
     
     disconnect conn
