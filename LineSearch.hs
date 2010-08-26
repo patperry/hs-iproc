@@ -1,9 +1,82 @@
-module LineSearch
-    where
-        
+module LineSearch (
+    Control(..),
+    defaultControl,
+    
+    Function,
+    Eval(..),
+    Warning(..),
+    search,
+    
+    LineSearch,
+    Status(..),
+    init,
+    step,
+    best,
+    converge,
+    ) where
+
+import Prelude hiding ( init )
+import Text.Show.Functions
+
+import Debug.Trace
+
+phi1 alpha =
+    ( -alpha/(alpha^^2 + beta)
+    ,  (alpha^^2 - beta)/(alpha^^2 + beta)^^2
+    , ()
+    )
+  where
+    beta = 2
+
+phi2 alpha =
+    ( (alpha + beta)^^5  - 2 * (alpha + beta)^^4
+    , 5 * (alpha + beta)^^4  - 8 * (alpha + beta)^^3
+    , ()
+    )
+  where
+    beta = 0.004
+
+phi3 alpha = let
+    (f0,g0,_) = phi0
+    in ( f0 + 2 * (1 - beta)/( l * pi ) * sin (l * pi / 2 * alpha)
+       , g0 + (1 - beta) * cos (l * pi / 2 * alpha)
+       , ()
+       )
+  where
+    beta = 0.01
+    l = 39
+    phi0  =
+        ( if alpha <= 1 - beta
+                then 1 - alpha
+                else if alpha >= 1 + beta
+                    then alpha - 1
+                    else (alpha - 1)^^2 /( 2 * beta ) + 0.5 * beta
+        , if alpha <= 1 - beta
+                then -1
+                else if alpha >= 1 + beta
+                    then 1
+                    else (alpha - 1) / beta
+        , ()
+        )
+
+phi4 = yanai 0.001 0.001
+phi5 = yanai 0.01 0.001
+phi6 = yanai 0.001 0.01
+
+yanai beta1 beta2 alpha =
+    ( gamma beta1 * sqrt( (1 - alpha)^^2 + beta2^^2 )
+      + gamma beta2 * sqrt( alpha^^2 + beta1^^2 )
+    , gamma beta1 * (alpha - 1) / sqrt( (1 - alpha)^^2 + beta2^^2 )
+      + gamma beta2 * alpha / sqrt( alpha^^2 + beta1^^2 )
+    , ()
+    )
+  where
+    gamma beta = sqrt (1 + beta^^2) - beta
+    
+
 data Control = 
-    Control { funTol :: !Double
-            , gradTol :: !Double
+    Control { valueTol :: !Double
+            , derivTol :: !Double
             , stepTol :: !Double
             , stepMin :: !Double
             , stepMax :: !Double
@@ -12,8 +85,8 @@ data Control =
 
 defaultControl :: Control
 defaultControl =
-    Control { funTol = 1e-3
-            , gradTol = 0.9
+    Control { valueTol = 1e-3
+            , derivTol = 0.9
             , stepTol = 0.1
             , stepMin = 0
             , stepMax = 1e10
@@ -21,10 +94,10 @@ defaultControl =
 
 checkControl :: Control -> a -> a
 checkControl c
-    | not (funTol c >= 0) =
-        error $ "invalid funTol: `" ++ show (funTol c) ++ "'"
-    | not (gradTol c >= 0) =
-        error $ "invalid gradTol: `" ++ show (gradTol c) ++ "'"
+    | not (valueTol c >= 0) =
+        error $ "invalid valueTol: `" ++ show (valueTol c) ++ "'"
+    | not (derivTol c >= 0) =
+        error $ "invalid derivTol: `" ++ show (derivTol c) ++ "'"
     | not (stepTol c >= 0) =
         error $ "invalid stepTol: `" ++ show (stepTol c) ++ "'"
     | not (stepMin c >= 0) =
@@ -40,8 +113,8 @@ type Function a = Double -> (Double, Double, a)
 
 data Eval a = 
     Eval { position :: !Double
-         , value :: !Double
-         , deriv :: !Double
+         , value :: Double  -- lazy in case
+         , deriv :: Double  --              we have converged
          , state :: a
          }
     deriving Show
@@ -49,7 +122,7 @@ data Eval a =
 data LineSearch a =
     LineSearch { control :: !Control
                , function :: !(Function a)
-               , valueTest :: !Double
+               , valueTest :: Double -- lazy in case we have converged
                , derivTest :: !Double
                , bracketed :: !Bool
                , stage1 :: !Bool
@@ -62,110 +135,137 @@ data LineSearch a =
                , stepUpper :: !Double
                , width :: !Double
                , width' :: !Double
-               }
+               } deriving (Show)
+
+best :: LineSearch a -> Eval a
+best = lowerEval
     
+search :: Control
+       -> Function a
+       -> Double
+       -> Either (Warning, Eval a) (Eval a)
+search c f step0 = converge $ init c f step0
+
+converge :: LineSearch a -> Either (Warning, Eval a) (Eval a)
+converge ls =
+    case step ls of
+        Stuck w e      -> Left (w,e)
+        Converged e    -> Right e
+        InProgress ls' -> converge ls'
 
 init :: Control -> Function a -> Double -> LineSearch a
-init c f x0
-    | not (stepMin c <= x0) =
-          error $ "invalid step: `" ++ show x0 ++ "'"
+init c fdf step
+    | not (stepMin c <= step) =
+          error $ "invalid step: `" ++ show step ++ "'"
                 ++ " (stepMin is `" ++ show (stepMin c) ++ "')"
-    | not (x0 <= stepMax c) =
-          error $ "invalid step: `" ++ show x0 ++ "'"
+    | not (step <= stepMax c) =
+          error $ "invalid step: `" ++ show step ++ "'"
                 ++ " (stepMax is `" ++ show (stepMax c) ++ "')"
     | otherwise =
         let
-            (f0,d0,a0) = f x0
-            gtest = d0 * funTol c
-            ftest = f0 + x0 * gtest
+            (f0,d0,a0) = fdf 0
+            (f,d,a) = fdf step
+            gtest = d0 * valueTol c
+            ftest = f0 + step * gtest
             w = stepMax c - stepMin c
-            eval = Eval { position = x0, value = f0, deriv = d0, state = a0 }
+            lower = Eval { position = 0, value = f0, deriv = d0, state = a0 }
+            upper = lower
+            test = Eval { position = step, value = f, deriv = d, state = a}
         in
             checkControl c $
                 LineSearch { control = c
-                           , function = f
+                           , function = fdf
                            , value0 = f0
                            , deriv0 = d0
                            , valueTest = ftest
                            , derivTest = gtest
                            , bracketed = False
                            , stage1 = True
-                           , lowerEval = eval
-                           , upperEval = eval
-                           , testEval = eval
+                           , lowerEval = lower
+                           , upperEval = upper
+                           , testEval = test
                            , stepLower = 0
-                           , stepUpper = x0 + 4.0 * x0
+                           , stepUpper = step + 4.0 * step
                            , width = w
                            , width' = 2 * w
                            }
 
-data Warning = RoundErr | StepTol | AtStepMax | AtStepMin
+data Warning = RoundErr | WithinTol | AtStepMax | AtStepMin
+    deriving (Eq, Show)
 data Status a = Converged (Eval a)
-              | Warning (Eval a)
-              | InProgress
+              | Stuck Warning (Eval a)
+              | InProgress (LineSearch a)
 
-status :: LineSearch a -> Status a
-statux ls
+step :: LineSearch a -> Status a
+step ls
+    | brackt && t <= tmin || t >= tmax =
+        Stuck RoundErr $ lowerEval ls
+    | brackt && tmax - tmin <= (stepTol $ control ls) * tmax =
+        Stuck WithinTol $ lowerEval ls
+    | (  t == (stepMax $ control ls)
+      && value test <= ftest
+      && deriv test <= gtest ) =
+        Stuck AtStepMax test
+    | (  t == (stepMin $ control ls)
+      && (  value test > ftest
+         || deriv test >= gtest ) ) =
+        Stuck AtStepMin test
+    | (  value test <= ftest
+      && abs (deriv test) <= ((derivTol $ control ls)
+                              * (negate $ deriv0 ls))) =
+        Converged test
+    | otherwise =
+        InProgress $ unsafeStep ls
+      
+  where
+    brackt = bracketed ls
+    ftest = valueTest ls
+    gtest = valueTest ls
+    test = testEval ls
+    t = position test
+    (tmin,tmax) = (stepLower ls, stepUpper ls)
 
 
-step :: LineSearch a -> LineSearch a
-step ls = let
+unsafeStep :: LineSearch a -> LineSearch a
+unsafeStep ls = let
     (lower, upper, test) = (lowerEval ls, upperEval ls, testEval ls)
-    tbounds = (stepLower ls, stepUpper ls)
     ftest = valueTest ls
     gtest = derivTest ls
     
     -- if psi(t) <= 0 and f'(t) >= 0 for some step, then the
     -- algorithm enters the second stage
-    
-    stg1' = if not (stage1 ls)
-                then False
-                else value test <= ftest && deriv test >= 0
+    stg1' = stage1 ls && (value test > ftest || deriv test < 0)
                  
     -- A modified function is used to predict the step during the
     -- first stage if a lower function value has been obtained but
     -- the decrease is not sufficient.
-    modify = stg1' && value test <= value lower && value test > ftest
-    (mlower, mupper, mtest) =
-        if modify
-            then ( lower{ value = value lower - position lower * gtest
-                        , deriv = deriv lower - gtest
-                        }
-                 , upper{ value = value upper - position upper * gtest
-                        , deriv = deriv upper - gtest
-                        }
-                 , test{ value = value test - position test * gtest
-                       , deriv = deriv test - gtest
-                       }
-                 )
-            else (lower, upper, test)
+    (modify, reset) =
+        if stg1' && value test <= value lower && value test > ftest
+              then ( \e -> e{ value = value e - position e * gtest
+                            , deriv = deriv e - gtest }
+                   , \e -> e{ value = value e + position e * gtest
+                            , deriv = deriv e + gtest }
+                   )
+              else (id, id)
+    (mlower, mupper, mtest) = (modify lower, modify upper, modify test)
     
-    -- compute new step
-    (brackt', t0') = trialValue tbounds (bracketed ls) (mlower, mupper) mtest
-    
-    -- update bounds
+    -- compute new step and update bounds
+    (brackt', t0') = trialValue (stepLower ls, stepUpper ls) (bracketed ls)
+                                (mlower, mupper) mtest
     (mlower', mupper') = updateInterval (mlower,mupper) mtest
-    
-    -- Restore function and derivative values
-    (lower', upper') =
-        if modify
-            then ( mlower'{ value = value mlower' + position mlower' * gtest
-                          , deriv = deriv mlower' + gtest
-                          }
-                 , mupper'{ value = value mupper' + position mupper' * gtest
-                          , deriv = deriv mupper' + gtest
-                          }
-                )
-            else (mlower', mupper')
+    (lower', upper') = (reset mlower', reset mupper')
     
     -- perform a bisection step if necessary
-    (t1',w',w'') =
+    (w',w'',t1') =
         if brackt'
-            then ( position lower' + 0.5 * (position upper' - position lower')
-                 , abs (position upper' - position lower')
+            then ( abs (position upper' - position lower')
                  , width ls
+                 , if w' >= 0.66 * width' ls
+                       then (position lower'
+                             + 0.5 * (position upper' - position lower'))
+                       else t0'
                  )
-            else ( t0', width ls, width' ls )
+            else ( width ls, width' ls, t0' )
 
     -- set the minimum and maximum steps allowed
     (tmin',tmax') =
@@ -174,21 +274,15 @@ step ls = let
                  , max (position lower') (position upper')
                  )
             else ( t1' + 1.1 * (t1' - position lower')
-                 , t1' + 4.0 * (t1' - position upper')
+                 , t1' + 4.0 * (t1' - position lower')
                  )
     
     -- force the step to be within bounds
-    t' = (max tmin' . min tmax') t1'
+    t' = (max (stepMin $ control ls) . min (stepMax $ control ls)) t1'
 
-    -- if further progress is not possible, take step to be the best
-    -- point obtained so far
-    test' = if brackt' && (  t' <= tmin'
-                          || t' >= tmax'
-                          || tmax' - tmin' <= stepTol (control ls) * tmax'
-                          )
-                then lower'
-                else let (f,g,a) = (function ls) t' in Eval t' f g a
-    ftest' = value0 ls + position test' * gtest
+    -- obtain another function and derivative
+    test' = let (f,g,a) = (function ls) t' in Eval t' f g a
+    ftest' = value0 ls + t' * gtest
     
     in ls{ bracketed = brackt'
          , stage1 = stg1'
@@ -232,7 +326,7 @@ trialValue (tmin,tmax)
     | brackt && not (min l u < t && t < max l u) =
         error $ "Trial value `" ++ show t ++ "' is out of the interval"
               ++ "`(" ++ show (min l u) ++ ", " ++ show (max l u) ++ "'"
-    | brackt && not (gl * (t - l) > 0) =
+    | brackt && not (gl * (t - l) < 0) =
         error $ "Function does not decrease from lower endpoint"
     | brackt && not (tmin <= tmax) =
         error $ "Trial max `" ++ show tmax ++ "'"
@@ -240,15 +334,15 @@ trialValue (tmin,tmax)
 
     -- Case 1: higher function value
     | ft > fl =
-        result True $
+        trace "case1" $ result True $
             if abs (c - l) < abs (q - l)
                 then c
                 else c + 0.5 * (q - c)
 
     -- Case 2: lower function value, derivative opposite sign
     | signum gt /= signum gl =
-        result True $
-            if abs (c - t) >= abs (q - t)
+        trace "case2" $ result True $
+            if abs (c - t) >= abs (s - t)
                 then c
                 else s
 
@@ -258,23 +352,23 @@ trialValue (tmin,tmax)
                  then c
                  else if t > l then tmax
                                else tmin
-        in result brackt $
+        in trace "case3" $ result brackt $
             case brackt of
                -- extrapolate to closest of cubic and secant steps
                True | abs (t - c') < abs (t - s) -> safegaurd c'
                True | otherwise                  -> safegaurd s
 
-               -- extrapolate to farthest of cubic and secand steps
+               -- extrapolate to farthest of cubic and secant steps
                False | abs (t - c') > abs (t - s) -> clip c'
                False | otherwise                  -> clip s
        
     -- Case 4: lower function value, derivatives same sign, higher derivative
     | otherwise =
-        result brackt $
+        trace "case4" $ result brackt $
             case brackt of
                 True              -> cubicMin (t,ft,gt) (u,fu,gu)
-                False | l < t     -> tmin
-                False | otherwise -> tmax
+                False | l < t     -> tmax
+                False | otherwise -> tmin
   where
     c = cubicMin (l,fl,gl) (t,ft,gt)
     q = quadrMin (l,fl,gl) (t,ft)
@@ -285,7 +379,7 @@ trialValue (tmin,tmax)
     safegaurd | t > l     = min (t + 0.66 * (u - t))
               | otherwise = max (t + 0.66 * (u - t))
 
-    result brackt' t' = (brackt',t')
+    result brackt' t' = trace ("\nt': " ++ show t') (brackt',t')
 
 
 
@@ -294,7 +388,7 @@ quadrMin :: (Double,Double,Double)
          -> Double
 quadrMin (u,fu,du) (v,fv) = let
     a = v - u
-	in u + du / ((fu - fv) / a + du) / 2 * a
+	in u + (du / ((fu - fv) / a + du) / 2) * a
 	
 secant :: (Double,Double)
           -> (Double,Double)
@@ -317,3 +411,4 @@ cubicMin (u,fu,du) (v,fv,dv) = let
 	q = gamma - du + gamma + dv
 	r = p / q
 	in u + r * d
+
