@@ -28,6 +28,7 @@ data Control =
             , extrapMin :: !Double
             , extrapMax :: !Double
             , verbose :: !Bool
+            , iterMax :: !Int
             }
     deriving Show
 
@@ -41,6 +42,7 @@ defaultControl =
             , extrapMin = 1.1
             , extrapMax = 4.0
             , verbose = False
+            , iterMax = 1000
             }
 
 checkControl :: Control -> a -> a
@@ -61,6 +63,8 @@ checkControl c
     | not (extrapMax c > extrapMin c) =
         error $ "invalid extrapMax: `" ++ show (extrapMax c) ++ "'"
               ++ " (extrapMin is `" ++ show (extrapMin c) ++ "')"
+    | not (iterMax c > 0) =
+        error $ "invalid iterMax: `" ++ show (iterMax c) ++ "'"
     | otherwise = id
 
 
@@ -125,10 +129,16 @@ converge iter ls
     
   where
     result =
-        case step ls of
-            Stuck w e      -> Left (w, fromEval e)
-            Converged e    -> Right (fromEval e)
-            InProgress ls' -> converge (iter + 1) ls'
+        if iter >= iterMax (control ls)
+            then let
+                e = best ls
+                in if (value e > valueTest ls || deriv e >= derivTest ls)
+                    then Left (AtIterMax, fromEval e)
+                    else Right (fromEval e)
+            else case step ls of
+                Stuck w e      -> Left (w, fromEval e)
+                Converged e    -> Right (fromEval e)
+                InProgress ls' -> converge (iter + 1) ls'
     fromEval e =
         Result { resultIter = iter
                , resultStep = position e
@@ -174,7 +184,7 @@ init c fdf step
                            , width' = 2 * w
                            }
 
-data Warning = RoundErr | WithinTol | AtStepMax | AtStepMin
+data Warning = RoundErr | WithinTol | AtStepMax | AtStepMin | AtIterMax
     deriving (Eq, Show)
 data Status a = Converged (Eval a)
               | Stuck Warning (Eval a)
