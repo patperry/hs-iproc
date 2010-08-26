@@ -16,7 +16,7 @@ module LineSearch (
     ) where
 
 import Prelude hiding ( init )
-
+import Debug.Trace( trace )
 
 
 data Control = 
@@ -27,6 +27,7 @@ data Control =
             , stepMax :: !Double
             , extrapMin :: !Double
             , extrapMax :: !Double
+            , verbose :: !Bool
             }
     deriving Show
 
@@ -39,6 +40,7 @@ defaultControl =
             , stepMax = 1e10
             , extrapMin = 1.1
             , extrapMax = 4.0
+            , verbose = False
             }
 
 checkControl :: Control -> a -> a
@@ -98,14 +100,26 @@ search :: Control
        -> Function a
        -> Double
        -> Either (Warning, Eval a) (Eval a)
-search c f step0 = converge $ init c f step0
+search c f step0 = converge 1 $ init c f step0
 
-converge :: LineSearch a -> Either (Warning, Eval a) (Eval a)
-converge ls =
-    case step ls of
-        Stuck w e      -> Left (w,e)
-        Converged e    -> Right e
-        InProgress ls' -> converge ls'
+converge :: Int -> LineSearch a -> Either (Warning, Eval a) (Eval a)
+converge iter ls
+    | verbose (control ls) = let
+        e = testEval ls
+        in trace ("iter: " ++ show iter
+                 ++ " step: " ++ show (position e)
+                 ++ " value: " ++ show (value e)
+                 ++ " deriv: " ++ show (deriv e)
+                 ) result 
+    | otherwise =
+        result
+    
+  where
+    result =
+        case step ls of
+            Stuck w e      -> Left (w,e)
+            Converged e    -> Right e
+            InProgress ls' -> converge (iter + 1) ls'
 
 init :: Control -> Function a -> Double -> LineSearch a
 init c fdf step
