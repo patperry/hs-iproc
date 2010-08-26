@@ -24,14 +24,18 @@ tests_LineSearch = testGroup "LineSearch"
 testSearch name control phi cases =
     testGroup name
         [ testGroup (show alpha0)
-              [ testCase "alpha" $
+              [ testCase "m" $
                     case LineSearch.search control phi alpha0 of
-                        Right e -> trunc2 (LineSearch.position e) @?= alpha
-                        Left e -> assertFailure $ "Warning: " ++ show e
+                        Right r -> (LineSearch.resultIter r) @?= m
+                        Left r -> assertFailure $ "Warning: " ++ show r
+              , testCase "alpha" $
+                    case LineSearch.search control phi alpha0 of
+                        Right r -> trunc2 (LineSearch.resultStep r) @?= alpha
+                        Left r -> assertFailure $ "Warning: " ++ show r
               , testCase "dphi" $
                     case LineSearch.search control phi alpha0 of
-                        Right e -> trunc2 (LineSearch.deriv e) @?= dphi
-                        Left e -> assertFailure $ "Warning: " ++ show e
+                        Right r -> trunc2 (LineSearch.resultDeriv r) @?= dphi
+                        Left r -> assertFailure $ "Warning: " ++ show r
               ]
         | (alpha0,m,alpha,dphi) <- cases
         ]

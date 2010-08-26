@@ -3,7 +3,7 @@ module LineSearch (
     defaultControl,
     
     Function,
-    Eval(..),
+    Result(..),
     Warning(..),
     search,
     
@@ -75,6 +75,15 @@ data Eval a =
          }
     deriving Show
 
+data Result a =
+    Result { resultState :: a 
+           , resultStep :: !Double
+           , resultValue :: !Double
+           , resultDeriv :: !Double
+           , resultIter :: !Int
+           }
+    deriving Show
+
 data LineSearch a =
     LineSearch { control :: !Control
                , function :: !(Function a)
@@ -99,10 +108,10 @@ best = lowerEval
 search :: Control
        -> Function a
        -> Double
-       -> Either (Warning, Eval a) (Eval a)
+       -> Either (Warning, Result a) (Result a)
 search c f step0 = converge 1 $ init c f step0
 
-converge :: Int -> LineSearch a -> Either (Warning, Eval a) (Eval a)
+converge :: Int -> LineSearch a -> Either (Warning, Result a) (Result a)
 converge iter ls
     | verbose (control ls) = let
         e = testEval ls
@@ -117,9 +126,16 @@ converge iter ls
   where
     result =
         case step ls of
-            Stuck w e      -> Left (w,e)
-            Converged e    -> Right e
+            Stuck w e      -> Left (w, fromEval e)
+            Converged e    -> Right (fromEval e)
             InProgress ls' -> converge (iter + 1) ls'
+    fromEval e =
+        Result { resultIter = iter
+               , resultStep = position e
+               , resultValue = value e
+               , resultDeriv = deriv e
+               , resultState = state e
+               }
 
 init :: Control -> Function a -> Double -> LineSearch a
 init c fdf step
