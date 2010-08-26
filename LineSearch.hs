@@ -32,7 +32,7 @@ defaultControl :: Control
 defaultControl =
     Control { valueTol = 1e-3
             , derivTol = 0.9
-            , stepTol = 0.1
+            , stepTol = 1e-4
             , stepMin = 0
             , stepMax = 1e10
             }

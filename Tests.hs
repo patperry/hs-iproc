@@ -76,8 +76,7 @@ test_linesearch2 = testSearch "Table II" control2 phi2 $
         ]
 
 control2 = LineSearch.defaultControl { LineSearch.valueTol = 0.1
-                                     , LineSearch.derivTol = 0.1
-                                     , LineSearch.stepTol = 1e-5 }
+                                     , LineSearch.derivTol = 0.1 }
 
 phi2 alpha =
     ( (alpha + beta)^^5  - 2 * (alpha + beta)^^4
@@ -96,8 +95,7 @@ test_linesearch3 = testSearch "Table III" control3 phi3 $
         ]
 
 control3 = LineSearch.defaultControl { LineSearch.valueTol = 0.1
-                                     , LineSearch.derivTol = 0.1
-                                     , LineSearch.stepTol = 1e-5 }
+                                     , LineSearch.derivTol = 0.1 }
 
 phi3 alpha = let
     (f0,g0,_) = phi0
@@ -145,8 +143,7 @@ test_linesearch6 = testSearch "Table VI" control6 phi6 $
         ]
 
 control4 = LineSearch.defaultControl { LineSearch.valueTol = 0.001
-                                     , LineSearch.derivTol = 0.001
-                                     , LineSearch.stepTol = 1e-5 }
+                                     , LineSearch.derivTol = 0.001 }
 control5 = control4
 control6 = control4
 phi4 = yanai 0.001 0.001
