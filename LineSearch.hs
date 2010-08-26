@@ -16,9 +16,6 @@ module LineSearch (
     ) where
 
 import Prelude hiding ( init )
-import Text.Show.Functions
-
-import Debug.Trace
 
 phi1 alpha =
     ( -alpha/(alpha^^2 + beta)
@@ -135,7 +132,7 @@ data LineSearch a =
                , stepUpper :: !Double
                , width :: !Double
                , width' :: !Double
-               } deriving (Show)
+               }
 
 best :: LineSearch a -> Eval a
 best = lowerEval
@@ -334,14 +331,14 @@ trialValue (tmin,tmax)
 
     -- Case 1: higher function value
     | ft > fl =
-        trace "case1" $ result True $
+        result True $
             if abs (c - l) < abs (q - l)
                 then c
                 else c + 0.5 * (q - c)
 
     -- Case 2: lower function value, derivative opposite sign
     | signum gt /= signum gl =
-        trace "case2" $ result True $
+        result True $
             if abs (c - t) >= abs (s - t)
                 then c
                 else s
@@ -352,7 +349,7 @@ trialValue (tmin,tmax)
                  then c
                  else if t > l then tmax
                                else tmin
-        in trace "case3" $ result brackt $
+        in result brackt $
             case brackt of
                -- extrapolate to closest of cubic and secant steps
                True | abs (t - c') < abs (t - s) -> safegaurd c'
@@ -364,7 +361,7 @@ trialValue (tmin,tmax)
        
     -- Case 4: lower function value, derivatives same sign, higher derivative
     | otherwise =
-        trace "case4" $ result brackt $
+        result brackt $
             case brackt of
                 True              -> cubicMin (t,ft,gt) (u,fu,gu)
                 False | l < t     -> tmax
@@ -379,7 +376,7 @@ trialValue (tmin,tmax)
     safegaurd | t > l     = min (t + 0.66 * (u - t))
               | otherwise = max (t + 0.66 * (u - t))
 
-    result brackt' t' = trace ("\nt': " ++ show t') (brackt',t')
+    result brackt' t' = (brackt',t')
 
 
 
