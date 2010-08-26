@@ -25,6 +25,8 @@ data Control =
             , stepTol :: !Double
             , stepMin :: !Double
             , stepMax :: !Double
+            , extrapMin :: !Double
+            , extrapMax :: !Double
             }
     deriving Show
 
@@ -35,6 +37,8 @@ defaultControl =
             , stepTol = 1e-4
             , stepMin = 0
             , stepMax = 1e10
+            , extrapMin = 1.1
+            , extrapMax = 4.0
             }
 
 checkControl :: Control -> a -> a
@@ -50,6 +54,11 @@ checkControl c
     | not (stepMax c >= stepMin c) =
         error $ "invalid stepMax: `" ++ show (stepMax c) ++ "'"
               ++ " (stepMin is `" ++ show (stepMin c) ++ "')"
+    | not (extrapMin c > 1) =
+        error $ "invalid extrapMin: `" ++ show (extrapMin c) ++ "'"
+    | not (extrapMax c > extrapMin c) =
+        error $ "invalid extrapMax: `" ++ show (extrapMax c) ++ "'"
+              ++ " (extrapMin is `" ++ show (extrapMin c) ++ "')"
     | otherwise = id
 
 
@@ -130,7 +139,7 @@ init c fdf step
                            , upperEval = upper
                            , testEval = test
                            , stepLower = 0
-                           , stepUpper = step + 4.0 * step
+                           , stepUpper = step + extrapMax c * step
                            , width = w
                            , width' = 2 * w
                            }
@@ -218,8 +227,8 @@ unsafeStep ls = let
             then ( min (position lower') (position upper')
                  , max (position lower') (position upper')
                  )
-            else ( t1' + 1.1 * (t1' - position lower')
-                 , t1' + 4.0 * (t1' - position lower')
+            else ( t1' + (extrapMin $ control ls) * (t1' - position lower')
+                 , t1' + (extrapMax $ control ls) * (t1' - position lower')
                  )
     
     -- force the step to be within bounds
