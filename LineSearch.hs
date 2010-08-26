@@ -17,59 +17,7 @@ module LineSearch (
 
 import Prelude hiding ( init )
 
-phi1 alpha =
-    ( -alpha/(alpha^^2 + beta)
-    ,  (alpha^^2 - beta)/(alpha^^2 + beta)^^2
-    , ()
-    )
-  where
-    beta = 2
 
-phi2 alpha =
-    ( (alpha + beta)^^5  - 2 * (alpha + beta)^^4
-    , 5 * (alpha + beta)^^4  - 8 * (alpha + beta)^^3
-    , ()
-    )
-  where
-    beta = 0.004
-
-phi3 alpha = let
-    (f0,g0,_) = phi0
-    in ( f0 + 2 * (1 - beta)/( l * pi ) * sin (l * pi / 2 * alpha)
-       , g0 + (1 - beta) * cos (l * pi / 2 * alpha)
-       , ()
-       )
-  where
-    beta = 0.01
-    l = 39
-    phi0  =
-        ( if alpha <= 1 - beta
-                then 1 - alpha
-                else if alpha >= 1 + beta
-                    then alpha - 1
-                    else (alpha - 1)^^2 /( 2 * beta ) + 0.5 * beta
-        , if alpha <= 1 - beta
-                then -1
-                else if alpha >= 1 + beta
-                    then 1
-                    else (alpha - 1) / beta
-        , ()
-        )
-
-phi4 = yanai 0.001 0.001
-phi5 = yanai 0.01 0.001
-phi6 = yanai 0.001 0.01
-
-yanai beta1 beta2 alpha =
-    ( gamma beta1 * sqrt( (1 - alpha)^^2 + beta2^^2 )
-      + gamma beta2 * sqrt( alpha^^2 + beta1^^2 )
-    , gamma beta1 * (alpha - 1) / sqrt( (1 - alpha)^^2 + beta2^^2 )
-      + gamma beta2 * alpha / sqrt( alpha^^2 + beta1^^2 )
-    , ()
-    )
-  where
-    gamma beta = sqrt (1 + beta^^2) - beta
-    
 
 data Control = 
     Control { valueTol :: !Double
