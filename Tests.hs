@@ -36,6 +36,11 @@ testSearch name control phi cases =
                     case LineSearch.search control phi (phi 0) alpha0 of
                         Right r -> trunc2 (LineSearch.resultDeriv r) @?= dphi
                         Left r -> assertFailure $ "Warning: " ++ show r
+              , testCase "state" $
+                    case LineSearch.search control phi (phi 0) alpha0 of
+                        Right r -> (LineSearch.resultState r)
+                                       @?= (LineSearch.resultStep r)
+                        Left r -> assertFailure $ "Warning: " ++ show r
               ]
         | (alpha0,m,alpha,dphi) <- cases
         ]
@@ -66,7 +71,7 @@ control1 = LineSearch.defaultControl { LineSearch.valueTol = 0.001
 phi1 alpha =
     ( -alpha/(alpha^^2 + beta)
     ,  (alpha^^2 - beta)/(alpha^^2 + beta)^^2
-    , ()
+    , alpha
     )
   where
     beta = 2
@@ -85,7 +90,7 @@ control2 = LineSearch.defaultControl { LineSearch.valueTol = 0.1
 phi2 alpha =
     ( (alpha + beta)^^5  - 2 * (alpha + beta)^^4
     , 5 * (alpha + beta)^^4  - 8 * (alpha + beta)^^3
-    , ()
+    , alpha
     )
   where
     beta = 0.004
@@ -105,7 +110,7 @@ phi3 alpha = let
     (f0,g0,_) = phi0
     in ( f0 + 2 * (1 - beta)/( l * pi ) * sin (l * pi / 2 * alpha)
        , g0 + (1 - beta) * cos (l * pi / 2 * alpha)
-       , ()
+       , alpha
        )
   where
     beta = 0.01
@@ -159,7 +164,7 @@ yanai beta1 beta2 alpha =
       + gamma beta2 * sqrt( alpha^^2 + beta1^^2 )
     , gamma beta1 * (alpha - 1) / sqrt( (1 - alpha)^^2 + beta2^^2 )
       + gamma beta2 * alpha / sqrt( alpha^^2 + beta1^^2 )
-    , ()
+    , alpha
     )
   where
     gamma beta = sqrt (1 + beta^^2) - beta
