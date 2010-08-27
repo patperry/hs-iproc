@@ -37,6 +37,7 @@ module LineSearch (
     ) where
 
 import Prelude hiding ( init )
+import Data.Maybe( fromJust, isJust )
 import Debug.Trace( trace )
 
 
@@ -63,8 +64,9 @@ data Control =
         , bisectionWidth :: !Double -- ^ minimum relative decrease in interval
                                     --   before performing bisection instead
                                     --   (default @0.66@)
-        , iterMax :: !Int           -- ^ maximum number of iterations
-                                    --   (default @10^10@)
+        , iterMax :: !(Maybe Int)   -- ^ maximum number of iterations, or
+                                    --   @Nothing@ if unbouned
+                                    --   (default @Nothing@)
         , verbose :: !Bool          -- ^ indicates whether to print status
                                     --   to stderr after each iterate
                                     --   (default @False@)
@@ -84,7 +86,7 @@ defaultControl =
             , extrapUpper = 4.0
             , safeguardReset = 0.66
             , bisectionWidth = 0.66
-            , iterMax = 10^(10::Int)
+            , iterMax = Nothing
             , verbose = False
             }
 
@@ -110,7 +112,7 @@ checkControl c
         error $ "invalid safeguardReset: `" ++ show (safeguardReset c) ++ "'"
     | not (bisectionWidth c >= 0 && bisectionWidth c < 1) =
         error $ "invalid bisectionWidth: `" ++ show (bisectionWidth c) ++ "'"
-    | not (iterMax c > 0) =
+    | isJust (iterMax c) && not (fromJust (iterMax c) > 0) =
         error $ "invalid iterMax: `" ++ show (iterMax c) ++ "'"
     | otherwise = id
 
@@ -317,7 +319,7 @@ step test ls
       && (  value test > ftest
          || deriv test >= gtest ) ) =
         stuck AtStepMin
-    | iter ls >= iterMax (control ls) =
+    | isJust itmax && iter ls >= fromJust itmax =
         stuck AtIterMax
     | otherwise = let
         (t',ls') = unsafeStep test ls
@@ -339,7 +341,7 @@ step test ls
     gtest = derivTest ls
     t = position test
     (tmin,tmax) = (stepLower ls, stepUpper ls)
-
+    itmax = iterMax (control ls)
 
 
 unsafeStep :: Eval -> State -> (Double, State)
