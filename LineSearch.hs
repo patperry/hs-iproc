@@ -357,7 +357,7 @@ trialValue (tmin,tmax)
         result brackt $
             case brackt of
                 True              -> cubicMin (t,ft,gt) (u,fu,gu)
-                False | l < t     -> tmax
+                False | t > l     -> tmax
                 False | otherwise -> tmin
   where
     c = cubicMin (l,fl,gl) (t,ft,gt)
