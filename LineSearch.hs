@@ -10,8 +10,8 @@
 -- the strong Wolfe conditions (sufficient decrease and curvature condition).
 -- Useful as part of a function minimization algorithm.  
 --
--- This module implements the algorithm described by Mor&#233; and Thuente,
--- which is guaranteed to converge after a finite number of steps.
+-- This module implements the algorithm described by Mor&#233; and Thuente
+-- (1994), which is guaranteed to converge after a finite number of steps.
 -- The implementation allows the user to lazily return extra state with each
 -- function evaluation, potentially storing gradient or Hessian information. 
 -- The 'search' function returns the state at the optimal step value.
@@ -216,7 +216,7 @@ init c fdf (f0,d0,a0) step0
             w = stepMax c - stepMin c
             lower = Eval { position = 0, value = f0, deriv = d0, state = a0 }
             upper = lower
-            test = Eval { position = step0, value = f, deriv = d, state = a}
+            test = Eval { position = step0, value = f, deriv = d, state = a }
         in
             checkControl c $
                 LineSearch { control = c
