@@ -254,7 +254,7 @@ data State =
           , stepLower :: !Double
           , stepUpper :: !Double
           , width :: !Double
-          , width' :: !Double
+          , oldWidth :: !Double
           }
 
 initState :: Control -> (Double, Double) ->  Double -> State
@@ -296,7 +296,7 @@ initState c (f0,d0) step0
                       , stepLower = 0
                       , stepUpper = step0 + extrapUpper c * step0
                       , width = w
-                      , width' = 2 * w
+                      , oldWidth = 2 * w
                       }
 
 step :: Eval -> State -> SearchCont
@@ -374,16 +374,16 @@ unsafeStep test ls = let
                                           (lower,upper,test)
     
     -- perform a bisection step if necessary
-    (w',w'',t1') =
+    (w',ow',t1') =
         if brackt'
             then ( abs (position upper' - position lower')
                  , width ls
-                 , if w' >= (bisectionWidth $ control ls) * width' ls
+                 , if w' >= (bisectionWidth $ control ls) * oldWidth ls
                        then (position lower'
                              + 0.5 * (position upper' - position lower'))
                        else t0'
                  )
-            else ( width ls, width' ls, t0' )
+            else ( width ls, oldWidth ls, t0' )
 
     -- set the minimum and maximum steps allowed
     (tmin',tmax') =
@@ -409,7 +409,7 @@ unsafeStep test ls = let
            , stepLower = tmin'
            , stepUpper = tmax'
            , width = w'
-           , width' = w''
+           , oldWidth = ow'
            }
        )
 
