@@ -53,7 +53,7 @@ data Control =
         , stepMin :: !Double        -- ^ minimum acceptable step
                                     --   (default @0.0@)
         , stepMax :: !Double        -- ^ maximum acceptable step
-                                    --   (default @1e10@)
+                                    --   (default @Infinity@)
         , extrapLower :: !Double    -- ^ lower step multiplier when
                                     --   extrapolating (default @1.1@)
         , extrapUpper :: !Double    -- ^ upper step multiplier when
@@ -81,7 +81,7 @@ defaultControl =
             , derivTol = 0.9
             , stepTol = 1e-4
             , stepMin = 0
-            , stepMax = 1e10
+            , stepMax = infty
             , extrapLower = 1.1
             , extrapUpper = 4.0
             , safeguardReset = 0.66
@@ -89,6 +89,8 @@ defaultControl =
             , iterMax = Nothing
             , verbose = False
             }
+  where
+    infty = 1.0 / (0.0 :: Double)
 
 checkControl :: Control -> a -> a
 checkControl c
