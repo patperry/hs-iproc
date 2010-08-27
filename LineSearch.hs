@@ -233,21 +233,17 @@ unsafeStep ls = let
     -- A modified function is used to predict the step during the
     -- first stage if a lower function value has been obtained but
     -- the decrease is not sufficient.
-    (modify, reset) =
-        if stg1' && value test <= value lower && value test > ftest
-              then ( \e -> e{ value = value e - position e * gtest
-                            , deriv = deriv e - gtest }
-                   , \e -> e{ value = value e + position e * gtest
-                            , deriv = deriv e + gtest }
-                   )
-              else (id, id)
+    modify e = if stg1' && value test <= value lower && value test > ftest
+                   then e{ value = value e - position e * gtest
+                         , deriv = deriv e - gtest }
+                   else e
     (mlower, mupper, mtest) = (modify lower, modify upper, modify test)
     
     -- compute new step and update bounds
     (brackt', t0') = trialValue (stepLower ls, stepUpper ls) (bracketed ls)
                                 (mlower, mupper) mtest
-    (mlower', mupper') = updateInterval (mlower,mupper) mtest
-    (lower', upper') = (reset mlower', reset mupper')
+    (lower', upper') = updateIntervalWith (mlower,mupper,mtest)
+                                          (lower,upper,test)
     
     -- perform a bisection step if necessary
     (w',w'',t1') =
@@ -291,11 +287,11 @@ unsafeStep ls = let
          }
 
 -- | Modified updating algorithm (pp. 297-298)
-updateInterval :: (Eval a, Eval a)
-               -> Eval a
-               -> (Eval a, Eval a)
-updateInterval (lower@(Eval l fl gl _), upper@(Eval u fu gu _))
-               test@(Eval t ft gt _)
+updateIntervalWith :: (Eval a, Eval a, Eval a)
+                   -> (Eval a, Eval a, Eval a)
+                   -> (Eval a, Eval a)
+updateIntervalWith ((Eval l fl gl _), (Eval u fu gu _), (Eval t ft gt _))
+                   (lower, upper, test)
     -- Case a: higher function value
     | ft > fl =
         (lower, test)
