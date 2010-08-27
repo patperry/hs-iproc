@@ -132,9 +132,6 @@ data Warning = RoundErr  -- ^ rounding errors prevent further progress
              | AtStepMin -- ^ step is at 'stepMin'
              | AtStepMax -- ^ step is at 'stepMax'
              | AtIterMax -- ^ algorithm has gone through 'iterMax' iterations
-             | NaNValueAt !Double 
-                         -- ^ the function value or its derivative is NaN
-                         --   at the specified trial step
     deriving (Eq, Show)
 
 
@@ -300,8 +297,10 @@ initState c (f0,d0) step0
 
 step :: Eval -> State -> SearchCont
 step test ls
-    | isNaN (value test) || isNaN (deriv test) =
-        stuck $ NaNValueAt (position test)
+    | isNaN (value test) =
+        error $ "function value is NaN"
+    | isNaN (deriv test) =
+        error $ "function derivative is NaN"
     | (  value test <= ftest
       && abs (deriv test) <= ((derivTol $ control ls)
                               * (negate $ deriv0 ls))) =
