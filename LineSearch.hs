@@ -7,11 +7,10 @@ module LineSearch (
     Warning(..),
     search,
     
-    LineSearch,
+    LineSearch(..),
     Status(..),
     init,
     step,
-    best,
     converge,
     ) where
 
@@ -106,14 +105,12 @@ data LineSearch a =
                , width' :: !Double
                }
 
-best :: LineSearch a -> Eval a
-best = lowerEval
-    
 search :: Control
        -> Function a
+       -> (Double, Double, a)
        -> Double
        -> Either (Warning, Result a) (Result a)
-search c f step0 = converge 1 $ init c f step0
+search c fdf (f0,df0,a0) step0 = converge 1 $ init c fdf (f0,df0,a0) step0
 
 converge :: Int -> LineSearch a -> Either (Warning, Result a) (Result a)
 converge iter ls
@@ -131,7 +128,7 @@ converge iter ls
     result =
         if iter >= iterMax (control ls)
             then let
-                e = best ls
+                e = lowerEval ls
                 in if (value e > valueTest ls || deriv e >= derivTest ls)
                     then Left (AtIterMax, fromEval e)
                     else Right (fromEval e)
@@ -147,24 +144,30 @@ converge iter ls
                , resultState = state e
                }
 
-init :: Control -> Function a -> Double -> LineSearch a
-init c fdf step
-    | not (stepMin c <= step) =
-          error $ "invalid step: `" ++ show step ++ "'"
+init :: Control -> Function a -> (Double, Double, a) -> Double -> LineSearch a
+init c fdf (f0,d0,a0) step0
+    | isNaN f0 =
+        error $ "initial value is NaN"
+    | isNaN d0 =
+        error $ "initial derivative is NaN"
+    | not (d0 < 0) =
+        error $ "initial derivative is not negative"
+              ++ " (initial derivative is is `" ++ show d0 ++ "')"
+    | not (stepMin c <= step0) =
+          error $ "invalid step: `" ++ show step0 ++ "'"
                 ++ " (stepMin is `" ++ show (stepMin c) ++ "')"
-    | not (step <= stepMax c) =
-          error $ "invalid step: `" ++ show step ++ "'"
+    | not (step0 <= stepMax c) =
+          error $ "invalid step: `" ++ show step0 ++ "'"
                 ++ " (stepMax is `" ++ show (stepMax c) ++ "')"
     | otherwise =
         let
-            (f0,d0,a0) = fdf 0
-            (f,d,a) = fdf step
+            (f,d,a) = fdf step0
             gtest = d0 * valueTol c
-            ftest = f0 + step * gtest
+            ftest = f0 + step0 * gtest
             w = stepMax c - stepMin c
             lower = Eval { position = 0, value = f0, deriv = d0, state = a0 }
             upper = lower
-            test = Eval { position = step, value = f, deriv = d, state = a}
+            test = Eval { position = step0, value = f, deriv = d, state = a}
         in
             checkControl c $
                 LineSearch { control = c
@@ -179,7 +182,7 @@ init c fdf step
                            , upperEval = upper
                            , testEval = test
                            , stepLower = 0
-                           , stepUpper = step + extrapMax c * step
+                           , stepUpper = step0 + extrapMax c * step0
                            , width = w
                            , width' = 2 * w
                            }

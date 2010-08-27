@@ -25,15 +25,15 @@ testSearch name control phi cases =
     testGroup name
         [ testGroup (show alpha0)
               [ testCase "m" $
-                    case LineSearch.search control phi alpha0 of
+                    case LineSearch.search control phi (phi 0) alpha0 of
                         Right r -> (LineSearch.resultIter r) @?= m
                         Left r -> assertFailure $ "Warning: " ++ show r
               , testCase "alpha" $
-                    case LineSearch.search control phi alpha0 of
+                    case LineSearch.search control phi (phi 0) alpha0 of
                         Right r -> trunc2 (LineSearch.resultStep r) @?= alpha
                         Left r -> assertFailure $ "Warning: " ++ show r
               , testCase "dphi" $
-                    case LineSearch.search control phi alpha0 of
+                    case LineSearch.search control phi (phi 0) alpha0 of
                         Right r -> trunc2 (LineSearch.resultDeriv r) @?= dphi
                         Left r -> assertFailure $ "Warning: " ++ show r
               ]
