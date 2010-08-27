@@ -59,12 +59,14 @@ data Control =
                                     --   (default @0.66@)
         , iterMax :: !Int           -- ^ maximum number of iterations
                                     --   (default @10^10@)
-        , verbose :: !Bool          -- ^ print status to stderr after each
-                                    --   iterate (default @False@)
+        , verbose :: !Bool          -- ^ indicates whether to print status
+                                    --   to stderr after each iterate
+                                    --   (default @False@)
         }
     deriving (Eq, Show)
 
--- | Default search parameters, as specified above.
+-- | Default search parameters, as specified in the documentation for
+-- 'Control'.
 defaultControl :: Control
 defaultControl =
     Control { valueTol = 1e-4
@@ -146,8 +148,9 @@ data LineSearch a =
                , width' :: !Double
                }
 
--- | Perform a line search to find a step that satisfies the
--- strong Wolfe conditions.
+-- | Perform a line search to find a step that satisfies the strong Wolfe
+-- conditions.  Upon success return 'Right' and the step; upon failure
+-- return 'Left' with a warning and the best step obtained during the search.
 search :: Control
        -- ^ search parameters
        -> (Double -> (Double, Double, a))
@@ -157,8 +160,7 @@ search :: Control
        -> Double
        -- ^ initial step size
        -> Either (Warning, Result a) (Result a)
-       -- ^ search result; upon failure return 'Left' with a warning
-       --   and the best step obtained during the search
+       -- ^ search result
 search c fdf (f0,df0,a0) step0 = converge 1 $ init c fdf (f0,df0,a0) step0
 
 converge :: Int -> LineSearch a -> Either (Warning, Result a) (Result a)
@@ -241,7 +243,7 @@ data Warning = RoundErr  -- ^ rounding errors prevent further progress
              | WithinTol -- ^ step is within 'stepTol' of a valid step
              | AtStepMin -- ^ step is at 'stepMin'
              | AtStepMax -- ^ step is at 'stepMax'
-             | AtIterMax -- ^ we have gone through 'iterMax' iterations
+             | AtIterMax -- ^ algorithm has gone through 'iterMax' iterations
              | NaNValueAt !Double 
                          -- ^ the function value or its derivative is NaN
                          --   at the specified trial step
@@ -476,6 +478,6 @@ cubicMin (u,fu,du) (v,fv,dv) = let
 --   with guaranteed sufficient decrease. /ACM Transactions on Mathematical Software/
 --   20(3):286&#8211;307. <http://doi.acm.org/10.1145/192115.192132>
 --
--- * Nocedal, J. and Wrigth, S. J. (2006) /Numerical Optimization/, 2nd ed.
+-- * Nocedal, J. and Wright, S. J. (2006) /Numerical Optimization/, 2nd ed.
 --   Springer. <http://www.springer.com/mathematics/book/978-0-387-30303-1>
 --
