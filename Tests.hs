@@ -73,8 +73,8 @@ phi1 alpha =
 
 
 test_linesearch2 = testSearch "Table II" control2 phi2 $
-        [ (1e-3, 12, 1.6,  7.1e-9)
-        , (1e-1,  8, 1.6,    1e-10) -- (reported as 10e-10 in paper; typo?)
+        [ (1e-3, 12, 1.6,  3.8e-9)  -- reported as 7.1e-9; mistake?
+        , (1e-1,  8, 1.6,    1e-10) -- reported as 10e-10; typo?
         , (1e+1,  8, 1.6, -5.0e-9)
         , (1e+3, 11, 1.6, -2.3e-8)
         ]
@@ -126,7 +126,7 @@ phi3 alpha = let
 
 
 test_linesearch4 = testSearch "Table IV" control4 phi4 $
-        [ (1e-3, 4, 0.085, -6.9e-5) -- reported as 0.08 in paper
+        [ (1e-3, 4, 0.085, -6.9e-5) -- reported as 0.08; rounding difference?
         , (1e-1, 1, 0.10, -4.9e-5)
         , (1e+1, 3, 0.35, -2.9e-6)
         , (1e+3, 4, 0.83,  1.6e-5)
