@@ -1,47 +1,83 @@
+-----------------------------------------------------------------------------
+-- |
+-- Module     : LineSearch
+-- Copyright  : Copyright (c) 2010, Patrick Perry <patperry@gmail.com>
+-- License    : BSD3
+-- Maintainer : Patrick Perry <patperry@gmail.com>
+-- Stability  : experimental
+--
+-- Perform a one-dimensional line search to find a step length satisfying
+-- the strong Wolfe conditions (sufficient decrease and curvature condition).
+-- Useful as part of a function minimization algorithm.  
+--
+-- This module implements the algorithm described by Mor&#233; and Thuente,
+-- which is guaranteed to converge after a finite number of steps.
+-- The implementation allows the user to lazily return extra state with each
+-- function evaluation, potentially storing gradient or Hessian information. 
+-- The 'search' function returns the state at the optimal step value.
+--
 module LineSearch (
+    -- * Search parameters
     Control(..),
     defaultControl,
-    
-    Function,
+
+    -- * Searching
+    search,
     Result(..),
     Warning(..),
-    search,
     
-    LineSearch(..),
-    Status(..),
-    init,
-    step,
-    converge,
+    -- * References
+    -- $references
     ) where
 
 import Prelude hiding ( init )
 import Debug.Trace( trace )
 
 
-data Control = 
-    Control { valueTol :: !Double
-            , derivTol :: !Double
-            , stepTol :: !Double
-            , stepMin :: !Double
-            , stepMax :: !Double
-            , extrapMin :: !Double
-            , extrapMax :: !Double
-            , verbose :: !Bool
-            , iterMax :: !Int
-            }
-    deriving Show
+-- | Parameters for the line search.
+data Control =
+    Control { 
+          valueTol :: !Double       -- ^ minimum relative decrease in function
+                                    --   value (default @1e-4@)
+        , derivTol :: !Double       -- ^ minimum relative decrease in
+                                    --   derivative magnitude (default @0.9@)
+        , stepTol :: !Double        -- ^ minimum relative precision in step
+                                    --   (default @1e-4@)
+        , stepMin :: !Double        -- ^ minimum acceptable step
+                                    --   (default @0.0@)
+        , stepMax :: !Double        -- ^ maximum acceptable step
+                                    --   (default @1e10@)
+        , extrapLower :: !Double    -- ^ lower step multiplier when
+                                    --   extrapolating (default @1.1@)
+        , extrapUpper :: !Double    -- ^ upper step multiplier when
+                                    --   extrapolating (default @4.0@)
+        , safeguardReset :: !Double -- ^ relative reset when trial
+                                    --   step is outside interval or too
+                                    --   close to endpoint (default @0.66@)
+        , bisectionWidth :: !Double -- ^ minimum relative decrease in interval
+                                    --   before performing bisection instead
+                                    --   (default @0.66@)
+        , iterMax :: !Int           -- ^ maximum number of iterations
+                                    --   (default @10^10@)
+        , verbose :: !Bool          -- ^ print status to stderr after each
+                                    --   iterate (default @False@)
+        }
+    deriving (Eq, Show)
 
+-- | Default search parameters, as specified above.
 defaultControl :: Control
 defaultControl =
-    Control { valueTol = 1e-3
+    Control { valueTol = 1e-4
             , derivTol = 0.9
             , stepTol = 1e-4
             , stepMin = 0
             , stepMax = 1e10
-            , extrapMin = 1.1
-            , extrapMax = 4.0
+            , extrapLower = 1.1
+            , extrapUpper = 4.0
+            , safeguardReset = 0.66
+            , bisectionWidth = 0.66
+            , iterMax = 10^10
             , verbose = False
-            , iterMax = 1000
             }
 
 checkControl :: Control -> a -> a
@@ -57,11 +93,15 @@ checkControl c
     | not (stepMax c >= stepMin c) =
         error $ "invalid stepMax: `" ++ show (stepMax c) ++ "'"
               ++ " (stepMin is `" ++ show (stepMin c) ++ "')"
-    | not (extrapMin c > 1) =
-        error $ "invalid extrapMin: `" ++ show (extrapMin c) ++ "'"
-    | not (extrapMax c > extrapMin c) =
-        error $ "invalid extrapMax: `" ++ show (extrapMax c) ++ "'"
-              ++ " (extrapMin is `" ++ show (extrapMin c) ++ "')"
+    | not (extrapLower c > 1) =
+        error $ "invalid extrapLower: `" ++ show (extrapLower c) ++ "'"
+    | not (extrapUpper c > extrapLower c) =
+        error $ "invalid extrapUpper: `" ++ show (extrapUpper c) ++ "'"
+              ++ " (extrapLower is `" ++ show (extrapLower c) ++ "')"
+    | not (safeguardReset c > 0 && safeguardReset c < 1) =
+        error $ "invalid safeguardReset: `" ++ show (safeguardReset c) ++ "'"
+    | not (bisectionWidth c >= 0 && bisectionWidth c < 1) =
+        error $ "invalid bisectionWidth: `" ++ show (bisectionWidth c) ++ "'"
     | not (iterMax c > 0) =
         error $ "invalid iterMax: `" ++ show (iterMax c) ++ "'"
     | otherwise = id
@@ -72,25 +112,26 @@ type Function a = Double -> (Double, Double, a)
 
 data Eval a = 
     Eval { position :: !Double
-         , value :: Double  -- lazy in case
-         , deriv :: Double  --              we have converged
+         , value :: !Double
+         , deriv :: !Double
          , state :: a
          }
     deriving Show
 
+-- | The result of a line search.
 data Result a =
-    Result { resultState :: a 
-           , resultStep :: !Double
-           , resultValue :: !Double
-           , resultDeriv :: !Double
-           , resultIter :: !Int
+    Result { resultIter :: !Int     -- ^ iterate number
+           , resultStep :: !Double  -- ^ step value
+           , resultValue :: !Double -- ^ function value
+           , resultDeriv :: !Double -- ^ function derivative
+           , resultState :: a       -- ^ extra state (lazy)
            }
-    deriving Show
+    deriving (Eq, Show)
 
 data LineSearch a =
     LineSearch { control :: !Control
                , function :: !(Function a)
-               , valueTest :: Double -- lazy in case we have converged
+               , valueTest :: !Double
                , derivTest :: !Double
                , bracketed :: !Bool
                , stage1 :: !Bool
@@ -105,11 +146,19 @@ data LineSearch a =
                , width' :: !Double
                }
 
+-- | Perform a line search to find a step that satisfies the
+-- strong Wolfe conditions.
 search :: Control
-       -> Function a
+       -- ^ search parameters
+       -> (Double -> (Double, Double, a))
+       -- ^ function mapping step to value, derivative, and extra state
        -> (Double, Double, a)
+       -- ^ value, derivative, and extra state at zero
        -> Double
+       -- ^ initial step size
        -> Either (Warning, Result a) (Result a)
+       -- ^ search result; upon failure return 'Left' with a warning
+       --   and the best step obtained during the search
 search c fdf (f0,df0,a0) step0 = converge 1 $ init c fdf (f0,df0,a0) step0
 
 converge :: Int -> LineSearch a -> Either (Warning, Result a) (Result a)
@@ -182,19 +231,30 @@ init c fdf (f0,d0,a0) step0
                            , upperEval = upper
                            , testEval = test
                            , stepLower = 0
-                           , stepUpper = step0 + extrapMax c * step0
+                           , stepUpper = step0 + extrapUpper c * step0
                            , width = w
                            , width' = 2 * w
                            }
 
-data Warning = RoundErr | WithinTol | AtStepMax | AtStepMin | AtIterMax
+-- | A warning to go along with a failed search.
+data Warning = RoundErr  -- ^ rounding errors prevent further progress
+             | WithinTol -- ^ step is within 'stepTol' of a valid step
+             | AtStepMin -- ^ step is at 'stepMin'
+             | AtStepMax -- ^ step is at 'stepMax'
+             | AtIterMax -- ^ we have gone through 'iterMax' iterations
+             | NaNValueAt !Double 
+                         -- ^ the function value or its derivative is NaN
+                         --   at the specified trial step
     deriving (Eq, Show)
+
 data Status a = Converged (Eval a)
               | Stuck Warning (Eval a)
               | InProgress (LineSearch a)
 
 step :: LineSearch a -> Status a
 step ls
+    | isNaN (value test) || isNaN (deriv test) =
+        Stuck (NaNValueAt (position test)) $ lowerEval ls
     | brackt && t <= tmin || t >= tmax =
         Stuck RoundErr $ lowerEval ls
     | brackt && tmax - tmin <= (stepTol $ control ls) * tmax =
@@ -243,7 +303,8 @@ unsafeStep ls = let
     (mlower, mupper, mtest) = (modify lower, modify upper, modify test)
     
     -- compute new step and update bounds
-    (brackt', t0') = trialValue (stepLower ls, stepUpper ls) (bracketed ls)
+    (brackt', t0') = trialValue (safeguardReset $ control ls)
+                                (stepLower ls, stepUpper ls) (bracketed ls)
                                 (mlower, mupper) mtest
     (lower', upper') = updateIntervalWith (mlower,mupper,mtest)
                                           (lower,upper,test)
@@ -253,7 +314,7 @@ unsafeStep ls = let
         if brackt'
             then ( abs (position upper' - position lower')
                  , width ls
-                 , if w' >= 0.66 * width' ls
+                 , if w' >= (bisectionWidth $ control ls) * width' ls
                        then (position lower'
                              + 0.5 * (position upper' - position lower'))
                        else t0'
@@ -266,8 +327,8 @@ unsafeStep ls = let
             then ( min (position lower') (position upper')
                  , max (position lower') (position upper')
                  )
-            else ( t1' + (extrapMin $ control ls) * (t1' - position lower')
-                 , t1' + (extrapMax $ control ls) * (t1' - position lower')
+            else ( t1' + (extrapLower $ control ls) * (t1' - position lower')
+                 , t1' + (extrapUpper $ control ls) * (t1' - position lower')
                  )
     
     -- force the step to be within bounds
@@ -293,7 +354,7 @@ unsafeStep ls = let
 updateIntervalWith :: (Eval a, Eval a, Eval a)
                    -> (Eval a, Eval a, Eval a)
                    -> (Eval a, Eval a)
-updateIntervalWith ((Eval l fl gl _), (Eval u fu gu _), (Eval t ft gt _))
+updateIntervalWith ((Eval _l fl gl _), (Eval _u _fu _gu _), (Eval _t ft gt _))
                    (lower, upper, test)
     -- Case a: higher function value
     | ft > fl =
@@ -307,15 +368,19 @@ updateIntervalWith ((Eval l fl gl _), (Eval u fu gu _), (Eval t ft gt _))
 
 
 -- | Trial value selection (Sec. 4, pp. 298-300)
-trialValue :: (Double, Double)
+trialValue :: Double
+           -> (Double, Double)
            -> Bool
            -> (Eval a, Eval a)
            -> Eval a
            -> (Bool, Double)
-trialValue (tmin,tmax)
+trialValue sreset
+           (tmin,tmax)
            brackt
-           (lower@(Eval l fl gl _), upper@(Eval u fu gu _))
-           test@(Eval t ft gt _)
+           ((Eval l fl gl _), (Eval u fu gu _))
+           (Eval t ft gt _)
+    | not (sreset > 0 && sreset < 1) =
+        error $ "Invalid safeguard reset: `" ++ show sreset ++ "'"
     | brackt && not (min l u < t && t < max l u) =
         error $ "Trial value `" ++ show t ++ "' is out of the interval"
               ++ "`(" ++ show (min l u) ++ ", " ++ show (max l u) ++ "'"
@@ -348,8 +413,8 @@ trialValue (tmin,tmax)
         in result brackt $
             case brackt of
                -- extrapolate to closest of cubic and secant steps
-               True | abs (t - c') < abs (t - s) -> safegaurd c'
-               True | otherwise                  -> safegaurd s
+               True | abs (t - c') < abs (t - s) -> safeguard c'
+               True | otherwise                  -> safeguard s
 
                -- extrapolate to farthest of cubic and secant steps
                False | abs (t - c') > abs (t - s) -> clip c'
@@ -369,8 +434,8 @@ trialValue (tmin,tmax)
 
     clip = max tmin . min tmax
 
-    safegaurd | t > l     = min (t + 0.66 * (u - t))
-              | otherwise = max (t + 0.66 * (u - t))
+    safeguard | t > l     = min (t + sreset * (u - t))
+              | otherwise = max (t + sreset * (u - t))
 
     result brackt' t' = (brackt',t')
 
@@ -405,3 +470,12 @@ cubicMin (u,fu,du) (v,fv,dv) = let
 	r = p / q
 	in u + r * d
 
+-- $references
+--
+-- * Mor&#233;, J. J. and Thuente, D. J. (1994) Line search algorithms
+--   with guaranteed sufficient decrease. /ACM Transactions on Mathematical Software/
+--   20(3):286&#8211;307. <http://doi.acm.org/10.1145/192115.192132>
+--
+-- * Nocedal, J. and Wrigth, S. J. (2006) /Numerical Optimization/, 2nd ed.
+--   Springer. <http://www.springer.com/mathematics/book/978-0-387-30303-1>
+--
