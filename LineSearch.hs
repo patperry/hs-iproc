@@ -278,7 +278,8 @@ initState c (f0,d0) step0
             gtest = d0 * valueTol c
             ftest = f0 + step0 * gtest
             w = stepMax c - stepMin c
-            lower = Eval { position = 0, value = f0, deriv = d0 }
+            -- use modified function to start with (psi, p.290)
+            lower = Eval { position = 0, value = f0, deriv = d0 - gtest }
             upper = lower
             test = lower
         in
@@ -324,8 +325,21 @@ step test ls
     | isJust itmax && iter ls >= fromJust itmax =
         stuck AtIterMax
     | otherwise = let
-        (t',ls') = unsafeStep test ls
-        in result $ InProgress t' $ \(f',df') -> step (Eval t' f' df') ls'
+        -- | p.298: if the modified function is nonpositive and the
+        -- derivative is positive, switch to original function
+        stg1' = stage1 ls && (value test > ftest || deriv test < 0)
+        test' = if stg1' then modify test else test
+        ls'   = if stage1 ls && not stg1'
+                    then ls{ stage1 = False
+                           , lowerEval = restore (lowerEval ls)
+                           , upperEval = restore (upperEval ls)
+                           }
+                    else ls
+        (t',ls'') = unsafeStep test' ls'
+        in result $ InProgress t' $ \(f',df') -> step (Eval t' f' df') ls''
+        
+        
+        
   where
     stuck w = let
         t' = (position . lowerEval) ls
@@ -341,6 +355,10 @@ step test ls
     brackt = bracketed ls
     ftest = valueTest ls
     gtest = derivTest ls
+    modify e = e{ value = value e - position e * gtest
+                , deriv = deriv e - gtest }
+    restore e = e{ value = value e + position e * gtest
+                 , deriv = deriv e + gtest }
     t = position test
     (Interval tmin tmax) = interval ls
     itmax = iterMax (control ls)
@@ -353,25 +371,11 @@ unsafeStep test ls = let
     ftest = valueTest ls
     gtest = derivTest ls
     
-    -- if psi(t) <= 0 and f'(t) >= 0 for some step, then the
-    -- algorithm enters the second stage
-    stg1' = stage1 ls && (value test > ftest || deriv test < 0)
-                 
-    -- A modified function is used to predict the step during the
-    -- first stage if a lower function value has been obtained but
-    -- the decrease is not sufficient.
-    modify e = if stg1' && value test <= value lower && value test > ftest
-                   then e{ value = value e - position e * gtest
-                         , deriv = deriv e - gtest }
-                   else e
-    (mlower, mupper, mtest) = (modify lower, modify upper, modify test)
-    
     -- compute new step and update bounds
     (brackt', t0') = trialValue (safeguardReset $ control ls)
                                 (interval ls) (bracketed ls)
-                                (mlower, mupper) mtest
-    (lower', upper') = updateIntervalWith (mlower,mupper,mtest)
-                                          (lower,upper,test)
+                                (lower, upper) test
+    (lower', upper') = updateInterval (lower,upper) test
     
     -- perform a bisection step if necessary
     (w',ow',t1') =
@@ -402,7 +406,6 @@ unsafeStep test ls = let
     in ( t'
        , ls{ iter = iter'
            , bracketed = brackt'
-           , stage1 = stg1'
            , valueTest = ftest'
            , lowerEval = lower'
            , upperEval = upper'
@@ -413,11 +416,11 @@ unsafeStep test ls = let
        )
 
 -- | Modified updating algorithm (pp. 297-298)
-updateIntervalWith :: (Eval, Eval, Eval)
-                   -> (Eval, Eval, Eval)
-                   -> (Eval, Eval)
-updateIntervalWith ((Eval _l fl gl), (Eval _u _fu _gu), (Eval _t ft gt))
-                   (lower, upper, test)
+updateInterval :: (Eval, Eval)
+               -> Eval
+               -> (Eval, Eval)
+updateInterval (lower@(Eval _l fl gl), upper@(Eval _u _fu _gu))
+               test@(Eval _t ft gt)
     -- Case a: higher function value
     | ft > fl =
         (lower, test)
