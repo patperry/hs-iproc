@@ -325,21 +325,8 @@ step test ls
     | isJust itmax && iter ls >= fromJust itmax =
         stuck AtIterMax
     | otherwise = let
-        -- | p.298: if the modified function is nonpositive and the
-        -- derivative is positive, switch to original function
-        stg1' = stage1 ls && (value test > ftest || deriv test < 0)
-        test' = if stg1' then modify test else test
-        ls'   = if stage1 ls && not stg1'
-                    then ls{ stage1 = False
-                           , lowerEval = restore (lowerEval ls)
-                           , upperEval = restore (upperEval ls)
-                           }
-                    else ls
-        (t',ls'') = unsafeStep test' ls'
-        in result $ InProgress t' $ \(f',df') -> step (Eval t' f' df') ls''
-        
-        
-        
+        (t',ls') = update test ls
+        in result $ InProgress t' $ \(f',df') -> step (Eval t' f' df') ls'
   where
     stuck w = let
         t' = (position . lowerEval) ls
@@ -355,17 +342,36 @@ step test ls
     brackt = bracketed ls
     ftest = valueTest ls
     gtest = derivTest ls
-    modify e = e{ value = value e - position e * gtest
-                , deriv = deriv e - gtest }
-    restore e = e{ value = value e + position e * gtest
-                 , deriv = deriv e + gtest }
     t = position test
     (Interval tmin tmax) = interval ls
     itmax = iterMax (control ls)
 
 
-unsafeStep :: Eval -> State -> (Double, State)
-unsafeStep test ls = let
+update :: Eval -> State -> (Double, State)
+update test ls = let
+    -- | p.298: if the modified function is nonpositive and the
+    -- derivative is positive, switch to original function
+    stage1' = stage1 ls && (value test > ftest || deriv test < 0)
+    test' = if stage1' then modify test else test
+    ls'   = if stage1 ls && not stage1'
+                then ls{ stage1 = False
+                       , lowerEval = restore (lowerEval ls)
+                       , upperEval = restore (upperEval ls)
+                       }
+                else ls
+    in unsafeUpdate test' ls'
+  where
+    ftest = valueTest ls
+    gtest = derivTest ls
+    modify e = e{ value = value e - position e * gtest
+                , deriv = deriv e - gtest }
+    restore e = e{ value = value e + position e * gtest
+                 , deriv = deriv e + gtest }
+    
+
+
+unsafeUpdate :: Eval -> State -> (Double, State)
+unsafeUpdate test ls = let
     iter' = iter ls + 1
     (lower, upper) = (lowerEval ls, upperEval ls)
     ftest = valueTest ls
