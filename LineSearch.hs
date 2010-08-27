@@ -239,6 +239,8 @@ data Eval =
          }
     deriving Show
 
+data Interval = Interval !Double !Double deriving Show
+
 data State =
     State { control :: !Control
           , iter :: !Int
@@ -251,8 +253,7 @@ data State =
           , lowerEval :: !Eval
           , upperEval :: !Eval
           , testEval :: !Eval
-          , stepLower :: !Double
-          , stepUpper :: !Double
+          , interval :: !Interval
           , width :: !Double
           , oldWidth :: !Double
           }
@@ -293,8 +294,7 @@ initState c (f0,d0) step0
                       , lowerEval = lower
                       , upperEval = upper
                       , testEval = test
-                      , stepLower = 0
-                      , stepUpper = step0 + extrapUpper c * step0
+                      , interval = Interval 0 (step0 + extrapUpper c * step0)
                       , width = w
                       , oldWidth = 2 * w
                       }
@@ -342,7 +342,7 @@ step test ls
     ftest = valueTest ls
     gtest = derivTest ls
     t = position test
-    (tmin,tmax) = (stepLower ls, stepUpper ls)
+    (Interval tmin tmax) = interval ls
     itmax = iterMax (control ls)
 
 
@@ -368,7 +368,7 @@ unsafeStep test ls = let
     
     -- compute new step and update bounds
     (brackt', t0') = trialValue (safeguardReset $ control ls)
-                                (stepLower ls, stepUpper ls) (bracketed ls)
+                                (interval ls) (bracketed ls)
                                 (mlower, mupper) mtest
     (lower', upper') = updateIntervalWith (mlower,mupper,mtest)
                                           (lower,upper,test)
@@ -386,14 +386,14 @@ unsafeStep test ls = let
             else ( width ls, oldWidth ls, t0' )
 
     -- set the minimum and maximum steps allowed
-    (tmin',tmax') =
+    int' =
         if brackt'
-            then ( min (position lower') (position upper')
-                 , max (position lower') (position upper')
-                 )
-            else ( t1' + (extrapLower $ control ls) * (t1' - position lower')
-                 , t1' + (extrapUpper $ control ls) * (t1' - position lower')
-                 )
+           then Interval
+                (min (position lower') (position upper'))
+                (max (position lower') (position upper'))
+           else Interval
+                (t1' + (extrapLower $ control ls) * (t1' - position lower'))
+                (t1' + (extrapUpper $ control ls) * (t1' - position lower'))
     
     -- force the step to be within bounds
     t' = (max (stepMin $ control ls) . min (stepMax $ control ls)) t1'
@@ -406,8 +406,7 @@ unsafeStep test ls = let
            , valueTest = ftest'
            , lowerEval = lower'
            , upperEval = upper'
-           , stepLower = tmin'
-           , stepUpper = tmax'
+           , interval = int'
            , width = w'
            , oldWidth = ow'
            }
@@ -432,13 +431,13 @@ updateIntervalWith ((Eval _l fl gl), (Eval _u _fu _gu), (Eval _t ft gt))
 
 -- | Trial value selection (Sec. 4, pp. 298-300)
 trialValue :: Double
-           -> (Double, Double)
+           -> Interval
            -> Bool
            -> (Eval, Eval)
            -> Eval
            -> (Bool, Double)
 trialValue sreset
-           (tmin,tmax)
+           (Interval tmin tmax)
            brackt
            ((Eval l fl gl), (Eval u fu gu))
            (Eval t ft gt)
