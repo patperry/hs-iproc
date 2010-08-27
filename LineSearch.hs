@@ -24,8 +24,13 @@ module LineSearch (
 
     -- * Searching
     search,
+    searchM,
     Result(..),
     Warning(..),
+    
+    -- * Continuation-based interface
+    SearchCont(..),
+    searchCont,
     
     -- * References
     -- $references
@@ -79,7 +84,7 @@ defaultControl =
             , extrapUpper = 4.0
             , safeguardReset = 0.66
             , bisectionWidth = 0.66
-            , iterMax = 10^10
+            , iterMax = 10^(10::Int)
             , verbose = False
             }
 
@@ -111,16 +116,6 @@ checkControl c
 
 
 
-type Function a = Double -> (Double, Double, a)
-
-data Eval a = 
-    Eval { position :: !Double
-         , value :: !Double
-         , deriv :: !Double
-         , state :: a
-         }
-    deriving Show
-
 -- | The result of a line search.
 data Result a =
     Result { resultIter :: !Int     -- ^ iterate number
@@ -131,23 +126,44 @@ data Result a =
            }
     deriving (Eq, Show)
 
-data LineSearch a =
-    LineSearch { control :: !Control
-               , function :: !(Function a)
-               , valueTest :: !Double
-               , derivTest :: !Double
-               , bracketed :: !Bool
-               , stage1 :: !Bool
-               , value0 :: !Double
-               , deriv0 :: !Double
-               , lowerEval :: !(Eval a)
-               , upperEval :: !(Eval a)
-               , testEval :: !(Eval a)
-               , stepLower :: !Double
-               , stepUpper :: !Double
-               , width :: !Double
-               , width' :: !Double
-               }
+-- | A warning to go along with a failed search.
+data Warning = RoundErr  -- ^ rounding errors prevent further progress
+             | WithinTol -- ^ step is within 'stepTol' of a valid step
+             | AtStepMin -- ^ step is at 'stepMin'
+             | AtStepMax -- ^ step is at 'stepMax'
+             | AtIterMax -- ^ algorithm has gone through 'iterMax' iterations
+             | NaNValueAt !Double 
+                         -- ^ the function value or its derivative is NaN
+                         --   at the specified trial step
+    deriving (Eq, Show)
+
+
+-- | A search continuation, allowing fine-grained control over objective
+-- function evaluation.  Both 'search' and 'searchM' are implemented using
+-- a 'SearchCont'.
+data SearchCont = Converged      -- ^ the search algorithm has converged
+                | Stuck Warning  -- ^ the search algorithm is stuck
+                | InProgress !Double ((Double,Double) -> SearchCont)
+                                 -- ^ the search algorith is in progress;
+                                 --   the first field is the next trial
+                                 --   step value; the second field is
+                                 --   a function which takes the value
+                                 --   and derivative at the trial step
+                                 --   and returns a new continutaiton
+
+-- | Returns a search continuation initialized with the given values.
+searchCont :: Control
+           -- ^ search parameters
+           -> (Double, Double)
+           -- ^ value and derivative at zero
+           -> Double
+           -- ^ initial step size
+           -> SearchCont
+           -- ^ result
+searchCont c fdf0 step0 = let
+    ls = initState c fdf0 step0
+    in InProgress step0 $ \(f,df) -> step (Eval step0 f df) ls
+
 
 -- | Perform a line search to find a step that satisfies the strong Wolfe
 -- conditions.  Upon success return 'Right' and the step; upon failure
@@ -155,49 +171,93 @@ data LineSearch a =
 search :: Control
        -- ^ search parameters
        -> (Double -> (Double, Double, a))
-       -- ^ function mapping step to value, derivative, and extra state
+       -- ^ function which maps step to value, derivative, and extra state
        -> (Double, Double, a)
        -- ^ value, derivative, and extra state at zero
        -> Double
        -- ^ initial step size
        -> Either (Warning, Result a) (Result a)
        -- ^ search result
-search c fdf (f0,df0,a0) step0 = converge 1 $ init c fdf (f0,df0,a0) step0
+search c fdf (f0,df0,a0) step0 =
+    runIdentity $ searchM c (return . fdf) (f0,df0,a0) step0
 
-converge :: Int -> LineSearch a -> Either (Warning, Result a) (Result a)
-converge iter ls
-    | verbose (control ls) = let
-        e = testEval ls
-        in trace ("iter: " ++ show iter
-                 ++ " step: " ++ show (position e)
-                 ++ " value: " ++ show (value e)
-                 ++ " deriv: " ++ show (deriv e)
-                 ) result 
-    | otherwise =
-        result
-    
+newtype Identity a = Identity { runIdentity :: a }
+instance Monad Identity where
+    return = Identity
+    {-# INLINE return #-}
+    m >>= f = f $ runIdentity m
+    {-# INLINE (>>=) #-}
+
+
+-- | Monadic version of 'search'.
+searchM :: (Monad m)
+        => Control
+        -- ^ search parameters
+        -> (Double -> m (Double, Double, a))
+        -- ^ function mapping step to value, derivative, and extra state
+        -> (Double, Double, a)
+        -- ^ value, derivative, and extra state at zero
+        -> Double
+        -- ^ initial step size
+        -> m (Either (Warning, Result a) (Result a))
+        -- ^ search result
+{-# INLINE searchM #-}
+searchM c fdf (f0,df0,a0) step0 =
+    convergeM fdf 0 (Eval 0 f0 df0, a0) $
+        searchCont c (f0,df0) step0
+
+{-# INLINE convergeM #-}
+convergeM :: (Monad m)
+          => (Double -> m (Double, Double, a))
+          -> Int
+          -> (Eval, a)
+          -> SearchCont
+          -> m (Either (Warning, Result a) (Result a))
+convergeM fdf i (e,a) k =
+    case k of
+        Converged -> return $ Right result
+        Stuck w   -> return $ Left (w, result)
+        InProgress step' ks -> do
+            (f',df',a') <- fdf step'
+            let i' = i + 1
+                k' = ks (f',df')
+                e' = Eval step' f' df'
+            i' `seq` e' `seq` convergeM fdf i' (e',a') k'
   where
-    result =
-        if iter >= iterMax (control ls)
-            then let
-                e = lowerEval ls
-                in if (value e > valueTest ls || deriv e >= derivTest ls)
-                    then Left (AtIterMax, fromEval e)
-                    else Right (fromEval e)
-            else case step ls of
-                Stuck w e      -> Left (w, fromEval e)
-                Converged e    -> Right (fromEval e)
-                InProgress ls' -> converge (iter + 1) ls'
-    fromEval e =
-        Result { resultIter = iter
-               , resultStep = position e
-               , resultValue = value e
-               , resultDeriv = deriv e
-               , resultState = state e
-               }
+    result = Result { resultIter = i
+                    , resultStep = position e
+                    , resultValue = value e
+                    , resultDeriv = deriv e
+                    , resultState = a 
+                    }
 
-init :: Control -> Function a -> (Double, Double, a) -> Double -> LineSearch a
-init c fdf (f0,d0,a0) step0
+data Eval = 
+    Eval { position :: !Double
+         , value :: !Double
+         , deriv :: !Double
+         }
+    deriving Show
+
+data State =
+    State { control :: !Control
+          , iter :: !Int
+          , valueTest :: !Double
+          , derivTest :: !Double
+          , bracketed :: !Bool
+          , stage1 :: !Bool
+          , value0 :: !Double
+          , deriv0 :: !Double
+          , lowerEval :: !Eval
+          , upperEval :: !Eval
+          , testEval :: !Eval
+          , stepLower :: !Double
+          , stepUpper :: !Double
+          , width :: !Double
+          , width' :: !Double
+          }
+
+initState :: Control -> (Double, Double) ->  Double -> State
+initState c (f0,d0) step0
     | isNaN f0 =
         error $ "initial value is NaN"
     | isNaN d0 =
@@ -213,82 +273,80 @@ init c fdf (f0,d0,a0) step0
                 ++ " (stepMax is `" ++ show (stepMax c) ++ "')"
     | otherwise =
         let
-            (f,d,a) = fdf step0
             gtest = d0 * valueTol c
             ftest = f0 + step0 * gtest
             w = stepMax c - stepMin c
-            lower = Eval { position = 0, value = f0, deriv = d0, state = a0 }
+            lower = Eval { position = 0, value = f0, deriv = d0 }
             upper = lower
-            test = Eval { position = step0, value = f, deriv = d, state = a }
+            test = lower
         in
             checkControl c $
-                LineSearch { control = c
-                           , function = fdf
-                           , value0 = f0
-                           , deriv0 = d0
-                           , valueTest = ftest
-                           , derivTest = gtest
-                           , bracketed = False
-                           , stage1 = True
-                           , lowerEval = lower
-                           , upperEval = upper
-                           , testEval = test
-                           , stepLower = 0
-                           , stepUpper = step0 + extrapUpper c * step0
-                           , width = w
-                           , width' = 2 * w
-                           }
+                State { control = c
+                      , iter = 0
+                      , value0 = f0
+                      , deriv0 = d0
+                      , valueTest = ftest
+                      , derivTest = gtest
+                      , bracketed = False
+                      , stage1 = True
+                      , lowerEval = lower
+                      , upperEval = upper
+                      , testEval = test
+                      , stepLower = 0
+                      , stepUpper = step0 + extrapUpper c * step0
+                      , width = w
+                      , width' = 2 * w
+                      }
 
--- | A warning to go along with a failed search.
-data Warning = RoundErr  -- ^ rounding errors prevent further progress
-             | WithinTol -- ^ step is within 'stepTol' of a valid step
-             | AtStepMin -- ^ step is at 'stepMin'
-             | AtStepMax -- ^ step is at 'stepMax'
-             | AtIterMax -- ^ algorithm has gone through 'iterMax' iterations
-             | NaNValueAt !Double 
-                         -- ^ the function value or its derivative is NaN
-                         --   at the specified trial step
-    deriving (Eq, Show)
-
-data Status a = Converged (Eval a)
-              | Stuck Warning (Eval a)
-              | InProgress (LineSearch a)
-
-step :: LineSearch a -> Status a
-step ls
+step :: Eval -> State -> SearchCont
+step test ls
     | isNaN (value test) || isNaN (deriv test) =
-        Stuck (NaNValueAt (position test)) $ lowerEval ls
-    | brackt && t <= tmin || t >= tmax =
-        Stuck RoundErr $ lowerEval ls
-    | brackt && tmax - tmin <= (stepTol $ control ls) * tmax =
-        Stuck WithinTol $ lowerEval ls
-    | (  t == (stepMax $ control ls)
-      && value test <= ftest
-      && deriv test <= gtest ) =
-        Stuck AtStepMax test
-    | (  t == (stepMin $ control ls)
-      && (  value test > ftest
-         || deriv test >= gtest ) ) =
-        Stuck AtStepMin test
+        stuck $ NaNValueAt (position test)
     | (  value test <= ftest
       && abs (deriv test) <= ((derivTol $ control ls)
                               * (negate $ deriv0 ls))) =
-        Converged test
-    | otherwise =
-        InProgress $ unsafeStep ls
-      
+        result $ Converged
+    | brackt && t <= tmin || t >= tmax =
+        stuck RoundErr
+    | brackt && tmax - tmin <= (stepTol $ control ls) * tmax =
+        stuck WithinTol
+    | (  t == (stepMax $ control ls)
+      && value test <= ftest
+      && deriv test <= gtest ) =
+        stuck AtStepMax
+    | (  t == (stepMin $ control ls)
+      && (  value test > ftest
+         || deriv test >= gtest ) ) =
+        stuck AtStepMin
+    | iter ls >= iterMax (control ls) =
+        stuck AtIterMax
+    | otherwise = let
+        (t',ls') = unsafeStep test ls
+        in result $ InProgress t' $ \(f',df') -> step (Eval t' f' df') ls'
   where
+    stuck w = let
+        t' = (position . lowerEval) ls
+        in result $ InProgress t' $ \(f',df') -> Stuck w
+        
+    result | (not . verbose) (control ls) = id
+           | otherwise =
+                 trace ("iter: " ++ show (1 + iter ls)
+                       ++ " step: " ++ show (position test)
+                       ++ " value: " ++ show (value test)
+                       ++ " deriv: " ++ show (deriv test)
+                       )
     brackt = bracketed ls
     ftest = valueTest ls
-    gtest = valueTest ls
-    test = testEval ls
+    gtest = derivTest ls
     t = position test
     (tmin,tmax) = (stepLower ls, stepUpper ls)
 
 
-unsafeStep :: LineSearch a -> LineSearch a
-unsafeStep ls = let
-    (lower, upper, test) = (lowerEval ls, upperEval ls, testEval ls)
+
+unsafeStep :: Eval -> State -> (Double, State)
+unsafeStep test ls = let
+    iter' = iter ls + 1
+    (lower, upper) = (lowerEval ls, upperEval ls)
     ftest = valueTest ls
     gtest = derivTest ls
     
@@ -336,28 +394,27 @@ unsafeStep ls = let
     
     -- force the step to be within bounds
     t' = (max (stepMin $ control ls) . min (stepMax $ control ls)) t1'
-
-    -- obtain another function and derivative
-    test' = let (f,g,a) = (function ls) t' in Eval t' f g a
     ftest' = value0 ls + t' * gtest
     
-    in ls{ bracketed = brackt'
-         , stage1 = stg1'
-         , valueTest = ftest'
-         , lowerEval = lower'
-         , upperEval = upper'
-         , testEval = test'
-         , stepLower = tmin'
-         , stepUpper = tmax'
-         , width = w'
-         , width' = w''
-         }
+    in ( t'
+       , ls{ iter = iter'
+           , bracketed = brackt'
+           , stage1 = stg1'
+           , valueTest = ftest'
+           , lowerEval = lower'
+           , upperEval = upper'
+           , stepLower = tmin'
+           , stepUpper = tmax'
+           , width = w'
+           , width' = w''
+           }
+       )
 
 -- | Modified updating algorithm (pp. 297-298)
-updateIntervalWith :: (Eval a, Eval a, Eval a)
-                   -> (Eval a, Eval a, Eval a)
-                   -> (Eval a, Eval a)
-updateIntervalWith ((Eval _l fl gl _), (Eval _u _fu _gu _), (Eval _t ft gt _))
+updateIntervalWith :: (Eval, Eval, Eval)
+                   -> (Eval, Eval, Eval)
+                   -> (Eval, Eval)
+updateIntervalWith ((Eval _l fl gl), (Eval _u _fu _gu), (Eval _t ft gt))
                    (lower, upper, test)
     -- Case a: higher function value
     | ft > fl =
@@ -374,14 +431,14 @@ updateIntervalWith ((Eval _l fl gl _), (Eval _u _fu _gu _), (Eval _t ft gt _))
 trialValue :: Double
            -> (Double, Double)
            -> Bool
-           -> (Eval a, Eval a)
-           -> Eval a
+           -> (Eval, Eval)
+           -> Eval
            -> (Bool, Double)
 trialValue sreset
            (tmin,tmax)
            brackt
-           ((Eval l fl gl _), (Eval u fu gu _))
-           (Eval t ft gt _)
+           ((Eval l fl gl), (Eval u fu gu))
+           (Eval t ft gt)
     | not (sreset > 0 && sreset < 1) =
         error $ "Invalid safeguard reset: `" ++ show sreset ++ "'"
     | brackt && not (min l u < t && t < max l u) =
@@ -441,7 +498,6 @@ trialValue sreset
               | otherwise = max (t + sreset * (u - t))
 
     result brackt' t' = (brackt',t')
-
 
 
 quadrMin :: (Double,Double,Double)
