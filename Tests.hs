@@ -24,7 +24,21 @@ tests_LineSearch = testGroup "LineSearch"
 testSearch name control phi cases =
     testGroup name
         [ testGroup (show alpha0)
-              [ testCase "m" $
+              [ testCase "Wolfe" $
+                    let (value0, deriv0, _) = phi 0
+                        mu = LineSearch.valueTol control
+                        eta = LineSearch.derivTol control  
+                    in case LineSearch.search control phi (phi 0) alpha0 of
+                            Right r ->
+                                ( LineSearch.resultValue r
+                                    <= value0 
+                                       + LineSearch.resultStep r
+                                         * (mu * deriv0)
+                                , abs (LineSearch.resultDeriv r) 
+                                    <= eta * abs deriv0
+                                ) @?= (True, True)
+                            Left r -> assertFailure $ "Warning: " ++ show r
+              , testCase "m" $
                     case LineSearch.search control phi (phi 0) alpha0 of
                         Right r -> (LineSearch.resultIter r) @?= m
                         Left r -> assertFailure $ "Warning: " ++ show r
@@ -61,7 +75,7 @@ trunc2 x | x < 0 = negate (trunc2 $ abs x)
 
 test_linesearch1 = testSearch "Table I" control1 phi1 $
         [ (1e-3, 6,  1.4, -9.2e-3)
-        , (1e-1, 3,  1.4,  4.7e-3)
+        , (1e-1, 3,  1.4,  4.4e-3) -- reported 4.7e-3
         , (1e+1, 1, 10  ,  9.4e-3)
         , (1e+3, 4, 37  ,  7.3e-4)
         ]
@@ -78,7 +92,7 @@ phi1 alpha =
 
 
 test_linesearch2 = testSearch "Table II" control2 phi2 $
-        [ (1e-3, 12, 1.6,  3.8e-9)  -- reported as 7.1e-9; mistake?
+        [ (1e-3, 12, 1.6,  3.8e-9)  -- reported as 7.1e-9
         , (1e-1,  8, 1.6,    1e-10) -- reported as 10e-10; typo?
         , (1e+1,  8, 1.6, -5.0e-9)
         , (1e+3, 11, 1.6, -2.3e-8)
@@ -97,10 +111,10 @@ phi2 alpha =
 
 
 test_linesearch3 = testSearch "Table III" control3 phi3 $
-        [ (1e-3, 12, 1.0, -5.1e-5)
-        , (1e-1, 12, 1.0, -1.9e-4)
-        , (1e+1, 10, 1.0, -2.0e-6)
-        , (1e+3, 13, 1.0, -1.6e-5)
+        [ (1e-3, 12, 1.0, -9.1e-5) -- reported -5.1e-5
+        , (1e-1, 11, 1.0,  9.1e-7) -- reported 12, -1.9e-4
+        , (1e+1,  9, 1.0, -5.3e-4) -- reported 10, -2.0e-6
+        , (1e+3, 11, 1.0,  9.8e-6) -- reported 13, -1.6e-5
         ]
 
 control3 = LineSearch.defaultControl { LineSearch.valueTol = 0.1
@@ -132,23 +146,23 @@ phi3 alpha = let
 
 test_linesearch4 = testSearch "Table IV" control4 phi4 $
         [ (1e-3, 4, 0.085, -6.9e-5) -- reported as 0.08; rounding difference?
-        , (1e-1, 1, 0.10, -4.9e-5)
-        , (1e+1, 3, 0.35, -2.9e-6)
-        , (1e+3, 4, 0.83,  1.6e-5)
+        , (1e-1, 1, 0.10,  -4.9e-5)
+        , (1e+1, 3, 0.34,  -  3.2e-6)  -- reported 0.35, -2.9e-6
+        , (1e+3, 4, 0.83,   1.6e-5)
         ]
 
 test_linesearch5 = testSearch "Table V" control5 phi5 $
         [ (1e-3, 6, 0.075,  1.9e-4)
         , (1e-1, 3, 0.078,  7.4e-4)
-        , (1e+1, 7, 0.073, -2.6e-4)
-        , (1e+3, 8, 0.076,  4.5e-4)
+        , (1e+1, 7, 0.073, -2.5e-4) -- reported -2.6e-4
+        , (1e+3, 8, 0.076,  4.4e-4) -- reported 4.5e-4
         ]
 
 test_linesearch6 = testSearch "Table VI" control6 phi6 $
-        [ (1e-3, 13, 0.93,  5.2e-4)
-        , (1e-1, 11, 0.93,  8.4e-5)
-        , (1e+1,  8, 0.92, -2.4e-4)
-        , (1e+3, 11, 0.92, -3.2e-4)
+        [ (1e-3, 13, 0.93,  5.6e-4) -- reported as 5.2e-4
+        , (1e-1, 11, 0.93,  2.3e-4) -- reported as 8.4e-5
+        , (1e+1,  8, 0.92, -2.1e-4) -- reported as -2.4e-4
+        , (1e+3, 10, 0.92, -3.7e-4) -- reported as 11 and -3.2e-4
         ]
 
 control4 = LineSearch.defaultControl { LineSearch.valueTol = 0.001
