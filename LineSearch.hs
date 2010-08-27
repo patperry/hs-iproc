@@ -49,7 +49,7 @@ data Control =
         , derivTol :: !Double       -- ^ minimum relative decrease in
                                     --   derivative magnitude (default @0.9@)
         , stepTol :: !Double        -- ^ minimum relative precision in step
-                                    --   (default @1e-4@)
+                                    --   (default @1e-7@)
         , stepMin :: !Double        -- ^ minimum acceptable step
                                     --   (default @0.0@)
         , stepMax :: !Double        -- ^ maximum acceptable step
@@ -79,7 +79,7 @@ defaultControl :: Control
 defaultControl =
     Control { valueTol = 1e-4
             , derivTol = 0.9
-            , stepTol = 1e-4
+            , stepTol = 1e-7
             , stepMin = 0
             , stepMax = infty
             , extrapLower = 1.1
