@@ -54,13 +54,19 @@ data Control =
                                     --   (default @0.0@)
         , stepMax :: !Double        -- ^ maximum acceptable step
                                     --   (default @Infinity@)
-        , extrapLower :: !Double    -- ^ lower step multiplier when
-                                    --   extrapolating (default @1.1@)
-        , extrapUpper :: !Double    -- ^ upper step multiplier when
-                                    --   extrapolating (default @4.0@)
-        , safeguardReset :: !Double -- ^ relative reset when trial
-                                    --   step is outside interval or too
-                                    --   close to endpoint (default @0.66@)
+        , extrapIntLower :: !Double -- ^ lower step multiplier when
+                                    --   extrapolating outside the original
+                                    --   search interval (default @1.1@)
+        , extrapIntUpper :: !Double -- ^ upper step multiplier when
+                                    --   extrapolating outside the
+                                    --   original search interval 
+                                    --   (default @4.0@)
+        , extrapMax :: !Double      -- ^ maximum relative distance
+                                    --   to extrapolate when step is
+                                    --   outside the interval defined
+                                    --   by the last two iterates or
+                                    --   too close to the worst endpoint
+                                    --   (default @0.66@)
         , bisectionWidth :: !Double -- ^ minimum relative decrease in interval
                                     --   before performing bisection instead
                                     --   (default @0.66@)
@@ -82,9 +88,9 @@ defaultControl =
             , stepTol = 1e-7
             , stepMin = 0
             , stepMax = infty
-            , extrapLower = 1.1
-            , extrapUpper = 4.0
-            , safeguardReset = 0.66
+            , extrapIntLower = 1.1
+            , extrapIntUpper = 4.0
+            , extrapMax = 0.66
             , bisectionWidth = 0.66
             , iterMax = Nothing
             , verbose = False
@@ -105,13 +111,13 @@ checkControl c
     | not (stepMax c >= stepMin c) =
         error $ "invalid stepMax: `" ++ show (stepMax c) ++ "'"
               ++ " (stepMin is `" ++ show (stepMin c) ++ "')"
-    | not (extrapLower c > 1) =
-        error $ "invalid extrapLower: `" ++ show (extrapLower c) ++ "'"
-    | not (extrapUpper c > extrapLower c) =
-        error $ "invalid extrapUpper: `" ++ show (extrapUpper c) ++ "'"
-              ++ " (extrapLower is `" ++ show (extrapLower c) ++ "')"
-    | not (safeguardReset c > 0 && safeguardReset c < 1) =
-        error $ "invalid safeguardReset: `" ++ show (safeguardReset c) ++ "'"
+    | not (extrapIntLower c > 1) =
+        error $ "invalid extrapIntLower: `" ++ show (extrapIntLower c) ++ "'"
+    | not (extrapIntUpper c > extrapIntLower c) =
+        error $ "invalid extrapIntUpper: `" ++ show (extrapIntUpper c) ++ "'"
+              ++ " (extrapIntLower is `" ++ show (extrapIntLower c) ++ "')"
+    | not (extrapMax c >= 0 && extrapMax c < 1) =
+        error $ "invalid extrapMax: `" ++ show (extrapMax c) ++ "'"
     | not (bisectionWidth c >= 0 && bisectionWidth c < 1) =
         error $ "invalid bisectionWidth: `" ++ show (bisectionWidth c) ++ "'"
     | isJust (iterMax c) && not (fromJust (iterMax c) > 0) =
@@ -280,6 +286,7 @@ initState c (f0,d0) step0
             lower = Eval { position = 0, value = f0, deriv = d0 - gtest }
             upper = lower
             test = lower
+            int = Interval 0 (step0 + extrapIntUpper c * step0)
         in
             checkControl c $
                 State { control = c
@@ -292,7 +299,7 @@ initState c (f0,d0) step0
                       , stage1 = True
                       , lowerEval = lower
                       , upperEval = upper
-                      , interval = Interval 0 (step0 + extrapUpper c * step0)
+                      , interval = int
                       , oldWidth1 = infty
                       , oldWidth2 = infty
                       }
@@ -388,24 +395,17 @@ unsafeUpdate test ls = let
     iter' = iter ls + 1
     (lower, upper) = (lowerEval ls, upperEval ls)
     gtest = derivTest ls
+    c = control ls
+    brackt = bracketed ls
     
-    -- compute new step and update interval
-    (brackt', t0') = trialValue (safeguardReset $ control ls)
-                                (interval ls) (bracketed ls)
-                                (lower, upper) test
-    (lower', upper') = updateInterval (lower,upper) test
+    -- compute new trial step
+    t0' = trialValue c brackt (interval ls) (lower, upper) test
     
-    -- set the minimum and maximum steps allowed
-    int' =
-        if brackt'
-           then Interval
-                (min (position lower') (position upper'))
-                (max (position lower') (position upper'))
-           else Interval -- interval expansion defined in p.291
-                (t0' + (extrapLower $ control ls) * (t0' - position lower'))
-                (t0' + (extrapUpper $ control ls) * (t0' - position lower'))
+    -- update the search interval
+    (brackt', int', (lower', upper'))
+        = updateInterval c brackt (lower,upper) test t0'
     
-    -- force the step to be within bounds
+    -- safeguard the step
     t' = (max (stepMin $ control ls) . min (stepMax $ control ls)) t0'
     ftest' = value0 ls + t' * gtest
     
@@ -420,58 +420,69 @@ unsafeUpdate test ls = let
        )
 
 -- | (Modified) Updating Algorithm (pp. 291, 297-298)
-updateInterval :: (Eval, Eval)
-               -> Eval
+updateInterval :: Control
+               -> Bool
                -> (Eval, Eval)
-updateInterval (lower@(Eval _l fl gl), upper@(Eval _u _fu _gu))
-               test@(Eval _t ft gt)
+               -> Eval
+               -> Double
+               -> (Bool, Interval, (Eval, Eval))
+updateInterval c brackt
+               (lower@(Eval _l fl gl), upper@(Eval _u _fu _gu))
+               test@(Eval t ft gt)
+               t'
     -- Case U1: higher function value
     | ft > fl =
-        (lower, test)
-    -- Case U2: lower function value, derivatives different signs
-    | otherwise && signum gt /= signum gl =
-        (test, lower)
+        withEndpoints (lower, test)
+        
+    -- Case U2: lower function value, derivatives same sign
+    | otherwise && signum gt == signum gl =
+        if brackt
+            then withEndpoints (test, upper)
+            
+            -- If we haven't found a suitable interval yet, then we
+            -- extrapolate (p.291)
+            else ( False
+                 , Interval (t' + (extrapIntLower c) * (t' - t))
+                            (t' + (extrapIntUpper c) * (t' - t))
+                 , (test, upper)
+                 )
+        
     -- Case U3: lower function value, derivatives same sign
     | otherwise =
-        (test, upper)
-
+        withEndpoints (test, lower)
+        
+  where
+    withEndpoints lu'@(l',u') =
+        ( True
+        , if position l' < position u'
+              then Interval (position l') (position u')
+              else Interval (position u') (position l')
+        , lu'
+        )
+        
 
 -- | Trial value selection (Sec. 4, pp. 298-300)
-trialValue :: Double
-           -> Interval
+trialValue :: Control
            -> Bool
+           -> Interval
            -> (Eval, Eval)
            -> Eval
-           -> (Bool, Double)
-trialValue sreset
+           -> Double
+trialValue ctrl brackt
            (Interval tmin tmax)
-           brackt
            ((Eval l fl gl), (Eval u fu gu))
            (Eval t ft gt)
-    | not (sreset > 0 && sreset < 1) =
-        error $ "Invalid safeguard reset: `" ++ show sreset ++ "'"
-    | brackt && not (min l u < t && t < max l u) =
-        error $ "Trial value `" ++ show t ++ "' is out of the interval"
-              ++ "`(" ++ show (min l u) ++ ", " ++ show (max l u) ++ "'"
-    | brackt && not (gl * (t - l) < 0) =
-        error $ "Function does not decrease from lower endpoint"
-    | brackt && not (tmin <= tmax) =
-        error $ "Trial max `" ++ show tmax ++ "'"
-              ++ " is less than trial min `" ++ show tmin ++ "'"
-
     -- Case 1: higher function value
     | ft > fl =
-        result True $
-            if abs (c - l) < abs (q - l)
-                then c
-                else c + 0.5 * (q - c)
+        if abs (c - l) < abs (q - l)
+            then c
+            else c + 0.5 * (q - c)
 
     -- Case 2: lower function value, derivative opposite sign
     | signum gt /= signum gl =
-        result True $
-            if abs (c - t) >= abs (s - t)
-                then c
-                else s
+        if abs (c - t) >= abs (s - t)
+            then c
+            else s
 
     -- Case 3: lower function value, derivatives same sign, lower derivative
     | abs gt <= abs gl = let
@@ -483,10 +494,9 @@ trialValue sreset
                  -- ...otherwise replace it with the endpoint in the
                  --  direction of t (secant step in paper)
                  else if t > l then tmax else tmin
-        in result brackt $
-            case brackt of
-               True | abs (t - c') < abs (t - s) -> safeguard c'
-               True | otherwise                  -> safeguard s
+        in case brackt of
+               True | abs (t - c') < abs (t - s) -> guardExtrap c'
+               True | otherwise                  -> guardExtrap s
 
                -- extrapolate to farthest of cubic and secant steps
                False | abs (t - c') > abs (t - s) -> clip c'
@@ -494,11 +504,10 @@ trialValue sreset
        
     -- Case 4: lower function value, derivatives same sign, higher derivative
     | otherwise =
-        result brackt $
-            case brackt of
-                True              -> cubicMin (t,ft,gt) (u,fu,gu)
-                False | t > l     -> tmax
-                False | otherwise -> tmin
+        case brackt of
+            True              -> cubicMin (t,ft,gt) (u,fu,gu)
+            False | t > l     -> tmax
+            False | otherwise -> tmin
   where
     c = cubicMin (l,fl,gl) (t,ft,gt)
     q = quadrMin (l,fl,gl) (t,ft)
@@ -506,10 +515,10 @@ trialValue sreset
 
     clip = max tmin . min tmax
 
-    safeguard | t > l     = min (t + sreset * (u - t))
-              | otherwise = max (t + sreset * (u - t))
+    guardExtrap | t > l     = min (t + extrapMax ctrl * (u - t))
+                | otherwise = max (t + extrapMax ctrl * (u - t))
 
-    result brackt' t' = (brackt', t')
+
 
 quadrMin :: (Double,Double,Double)
          -> (Double,Double)
