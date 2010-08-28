@@ -118,7 +118,7 @@ checkControl c
               ++ " (extrapIntLower is `" ++ show (extrapIntLower c) ++ "')"
     | not (extrapMax c >= 0 && extrapMax c < 1) =
         error $ "invalid extrapMax: `" ++ show (extrapMax c) ++ "'"
-    | not (bisectionWidth c >= 0 && bisectionWidth c < 1) =
+    | not (bisectionWidth c > 0 && bisectionWidth c < 1) =
         error $ "invalid bisectionWidth: `" ++ show (bisectionWidth c) ++ "'"
     | isJust (iterMax c) && not (fromJust (iterMax c) > 0) =
         error $ "invalid iterMax: `" ++ show (iterMax c) ++ "'"
@@ -455,8 +455,8 @@ updateInterval c brackt
     withEndpoints lu'@(l',u') =
         ( True
         , if position l' < position u'
-              then Interval (position l') (position u')
-              else Interval (position u') (position l')
+              then Interval (position l') $ (position u')
+              else Interval (position u') $ (position l')
         , lu'
         )
         
