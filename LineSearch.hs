@@ -359,7 +359,7 @@ update test ls = let
                        , upperEval = restore (upperEval ls)
                        }
                 else ls
-    in unsafeUpdate test' ls'
+    in maybeBisect $ unsafeUpdate test' ls'
   where
     ftest = valueTest ls
     gtest = derivTest ls
@@ -369,6 +369,20 @@ update test ls = let
                  , deriv = deriv e + gtest }
     
 
+-- | If the length of the interval doesn't decrease by delta after two
+-- iterations, then perform bisection instead (pp.292-293).
+maybeBisect :: (Double, State) -> (Double, State)
+maybeBisect (t, ls) | (not . bracketed) ls = (t,ls)
+                    | otherwise = let
+    l = position (lowerEval ls)
+    u = position (upperEval ls)
+    w' = case interval ls of { (Interval tmin tmax) -> tmax - tmin }
+    t' = if w' >= (bisectionWidth $ control ls) * oldWidth ls
+             then l + 0.5 * (u - l)
+             else t
+    ls' = ls{ width = w', oldWidth = width ls }
+    in (t',ls')
+
 
 unsafeUpdate :: Eval -> State -> (Double, State)
 unsafeUpdate test ls = let
@@ -376,36 +390,24 @@ unsafeUpdate test ls = let
     (lower, upper) = (lowerEval ls, upperEval ls)
     gtest = derivTest ls
     
-    -- compute new step and update bounds
+    -- compute new step and update interval
     (brackt', t0') = trialValue (safeguardReset $ control ls)
                                 (interval ls) (bracketed ls)
                                 (lower, upper) test
     (lower', upper') = updateInterval (lower,upper) test
     
-    -- perform a bisection step if necessary
-    (w',ow',t1') =
-        if brackt'
-            then ( abs (position upper' - position lower')
-                 , width ls
-                 , if w' >= (bisectionWidth $ control ls) * oldWidth ls
-                       then (position lower'
-                             + 0.5 * (position upper' - position lower'))
-                       else t0'
-                 )
-            else ( width ls, oldWidth ls, t0' )
-
     -- set the minimum and maximum steps allowed
     int' =
         if brackt'
            then Interval
                 (min (position lower') (position upper'))
                 (max (position lower') (position upper'))
-           else Interval
-                (t1' + (extrapLower $ control ls) * (t1' - position lower'))
-                (t1' + (extrapUpper $ control ls) * (t1' - position lower'))
+           else Interval -- interval expansion defined in p.291
+                (t0' + (extrapLower $ control ls) * (t0' - position lower'))
+                (t0' + (extrapUpper $ control ls) * (t0' - position lower'))
     
     -- force the step to be within bounds
-    t' = (max (stepMin $ control ls) . min (stepMax $ control ls)) t1'
+    t' = (max (stepMin $ control ls) . min (stepMax $ control ls)) t0'
     ftest' = value0 ls + t' * gtest
     
     in ( t'
@@ -415,24 +417,24 @@ unsafeUpdate test ls = let
            , lowerEval = lower'
            , upperEval = upper'
            , interval = int'
-           , width = w'
-           , oldWidth = ow'
+           -- , width = w'
+           -- , oldWidth = ow'
            }
        )
 
--- | Modified updating algorithm (pp. 297-298)
+-- | (Modified) Updating Algorithm (pp. 291, 297-298)
 updateInterval :: (Eval, Eval)
                -> Eval
                -> (Eval, Eval)
 updateInterval (lower@(Eval _l fl gl), upper@(Eval _u _fu _gu))
                test@(Eval _t ft gt)
-    -- Case a: higher function value
+    -- Case U1: higher function value
     | ft > fl =
         (lower, test)
-    -- Case b: lower function value, derivatives different signs
+    -- Case U2: lower function value, derivatives different signs
     | otherwise && signum gt /= signum gl =
         (test, lower)
-    -- Case c: lower function value, derivatives same sign
+    -- Case U3: lower function value, derivatives same sign
     | otherwise =
         (test, upper)
 
@@ -486,7 +488,6 @@ trialValue sreset
                  else if t > l then tmax else tmin
         in result brackt $
             case brackt of
-               -- extrapolate to closest of cubic and secant steps
                True | abs (t - c') < abs (t - s) -> safeguard c'
                True | otherwise                  -> safeguard s
 
@@ -504,15 +505,14 @@ trialValue sreset
   where
     c = cubicMin (l,fl,gl) (t,ft,gt)
     q = quadrMin (l,fl,gl) (t,ft)
-    s = secant (l,gl) (t,gt)
+    s = secantMin (l,gl) (t,gt)
 
     clip = max tmin . min tmax
 
     safeguard | t > l     = min (t + sreset * (u - t))
               | otherwise = max (t + sreset * (u - t))
 
-    result brackt' t' = (brackt',t')
-
+    result brackt' t' = (brackt', t')
 
 quadrMin :: (Double,Double,Double)
          -> (Double,Double)
@@ -521,10 +521,10 @@ quadrMin (u,fu,du) (v,fv) = let
     a = v - u
 	in u + (du / ((fu - fv) / a + du) / 2) * a
 	
-secant :: (Double,Double)
+secantMin :: (Double,Double)
           -> (Double,Double)
           -> Double
-secant (u,du) (v,dv) = let
+secantMin (u,du) (v,dv) = let
 	a = u - v
 	in v + dv / (dv - du) * a
 
