@@ -252,10 +252,9 @@ data State =
           , deriv0 :: !Double
           , lowerEval :: !Eval
           , upperEval :: !Eval
-          , testEval :: !Eval
           , interval :: !Interval
-          , width :: !Double
-          , oldWidth :: !Double
+          , oldWidth1 :: !Double
+          , oldWidth2 :: !Double
           }
 
 initState :: Control -> (Double, Double) ->  Double -> State
@@ -277,7 +276,6 @@ initState c (f0,d0) step0
         let
             gtest = d0 * valueTol c
             ftest = f0 + step0 * gtest
-            w = stepMax c - stepMin c
             -- use modified function to start with (psi, p.290)
             lower = Eval { position = 0, value = f0, deriv = d0 - gtest }
             upper = lower
@@ -294,11 +292,12 @@ initState c (f0,d0) step0
                       , stage1 = True
                       , lowerEval = lower
                       , upperEval = upper
-                      , testEval = test
                       , interval = Interval 0 (step0 + extrapUpper c * step0)
-                      , width = w
-                      , oldWidth = 2 * w
+                      , oldWidth1 = infty
+                      , oldWidth2 = infty
                       }
+  where
+    infty = 1/0
 
 step :: Eval -> State -> SearchCont
 step test ls
@@ -374,13 +373,13 @@ update test ls = let
 maybeBisect :: (Double, State) -> (Double, State)
 maybeBisect (t, ls) | (not . bracketed) ls = (t,ls)
                     | otherwise = let
-    l = position (lowerEval ls)
-    u = position (upperEval ls)
-    w' = case interval ls of { (Interval tmin tmax) -> tmax - tmin }
-    t' = if w' >= (bisectionWidth $ control ls) * oldWidth ls
+    l  = position (lowerEval ls)
+    u  = position (upperEval ls)
+    w  = case interval ls of { (Interval tmin tmax) -> tmax - tmin }
+    t' = if w >= (bisectionWidth $ control ls) * oldWidth2 ls
              then l + 0.5 * (u - l)
              else t
-    ls' = ls{ width = w', oldWidth = width ls }
+    ls' = ls{ oldWidth1 = w, oldWidth2 = oldWidth1 ls }
     in (t',ls')
 
 
@@ -417,8 +416,6 @@ unsafeUpdate test ls = let
            , lowerEval = lower'
            , upperEval = upper'
            , interval = int'
-           -- , width = w'
-           -- , oldWidth = ow'
            }
        )
 
