@@ -253,7 +253,7 @@ data State =
           , valueTest :: !Double
           , derivTest :: !Double
           , bracketed :: !Bool
-          , stage1 :: !Bool
+          , auxFun :: !Bool
           , value0 :: !Double
           , deriv0 :: !Double
           , lowerEval :: !Eval
@@ -296,7 +296,7 @@ initState c (f0,d0) step0
                       , valueTest = ftest
                       , derivTest = gtest
                       , bracketed = False
-                      , stage1 = True
+                      , auxFun = True
                       , lowerEval = lower
                       , upperEval = upper
                       , interval = int
@@ -355,12 +355,12 @@ step test ls
 
 update :: Eval -> State -> (Double, State)
 update test ls = let
-    -- | p.298: if the modified function is nonpositive and the
+    -- | p.298: if the auxiliary function is nonpositive and the
     -- derivative is positive, switch to original function
-    stage1' = stage1 ls && (value test > ftest || deriv test < 0)
-    test' = if stage1' then modify test else test
-    ls'   = if stage1 ls && not stage1'
-                then ls{ stage1 = False
+    aux' = auxFun ls && (value test > ftest || deriv test < 0)
+    test' = if aux' then modify test else test
+    ls'   = if auxFun ls && not aux'
+                then ls{ auxFun = False
                        , lowerEval = restore (lowerEval ls)
                        , upperEval = restore (upperEval ls)
                        }
