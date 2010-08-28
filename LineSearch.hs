@@ -282,10 +282,9 @@ initState c (f0,d0) step0
         let
             gtest = d0 * valueTol c
             ftest = f0 + step0 * gtest
-            -- use modified function to start with (psi, p.290)
+            -- use auxiliary function to start with (psi, p.290)
             lower = Eval { position = 0, value = f0, deriv = d0 - gtest }
             upper = lower
-            test = lower
             int = Interval 0 (step0 + extrapIntUpper c * step0)
         in
             checkControl c $
@@ -355,8 +354,8 @@ step test ls
 
 update :: Eval -> State -> (Double, State)
 update test ls = let
-    -- | p.298: if the auxiliary function is nonpositive and the
-    -- derivative is positive, switch to original function
+    -- If the auxiliary function is nonpositive and the derivative of the
+    -- original function is positive, switch to  the original function (p.298)
     aux' = auxFun ls && (value test > ftest || deriv test < 0)
     test' = if aux' then modify test else test
     ls'   = if auxFun ls && not aux'
