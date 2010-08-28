@@ -330,7 +330,7 @@ step test ls
   where
     stuck w = let
         t' = (position . lowerEval) ls
-        in result $ InProgress t' $ \(f',df') -> Stuck w
+        in result $ InProgress t' $ const (Stuck w)
         
     result | (not . verbose) (control ls) = id
            | otherwise =
@@ -374,7 +374,6 @@ unsafeUpdate :: Eval -> State -> (Double, State)
 unsafeUpdate test ls = let
     iter' = iter ls + 1
     (lower, upper) = (lowerEval ls, upperEval ls)
-    ftest = valueTest ls
     gtest = derivTest ls
     
     -- compute new step and update bounds
@@ -477,10 +476,14 @@ trialValue sreset
 
     -- Case 3: lower function value, derivatives same sign, lower derivative
     | abs gt <= abs gl = let
-        c' = if (not . isNaN) c && signum (c - t) /= signum (l - t)
+        -- if the cubic tends to infinity in the direciton of the
+        -- step and the minimum of the cubic is beyond t...
+        c' = if (not . isNaN) c && signum (c - t) == signum (c - l)
+                 -- ...then the cubic step is ok
                  then c
-                 else if t > l then tmax
-                               else tmin
+                 -- ...otherwise replace it with the endpoint in the
+                 --  direction of t (secant step in paper)
+                 else if t > l then tmax else tmin
         in result brackt $
             case brackt of
                -- extrapolate to closest of cubic and secant steps
@@ -529,16 +532,16 @@ cubicMin :: (Double,Double,Double)
          -> (Double,Double,Double)
          -> Double
 cubicMin (u,fu,du) (v,fv,dv) = let
-	d = v - u
-	theta = (fu - fv) * 3 / d + du + dv
-	s = maximum [ abs theta, abs du, abs dv ]
-	a = theta / s
-	gamma0 = s * sqrt (a * a - (du / s) * (dv / s))
-	gamma = if v < u then -gamma0 else gamma0
-	p = gamma - du + theta
-	q = gamma - du + gamma + dv
-	r = p / q
-	in u + r * d
+    d = v - u
+    theta = (fu - fv) * 3 / d + du + dv
+    s = maximum [ abs theta, abs du, abs dv ]
+    a = theta / s
+    gamma0 = s * sqrt (a * a - (du / s) * (dv / s))
+    gamma = if v < u then -gamma0 else gamma0
+    p = gamma - du + theta
+    q = gamma - du + gamma + dv
+    r = p / q
+    in u + r * d
 
 -- $references
 --
