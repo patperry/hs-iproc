@@ -379,13 +379,14 @@ update test ls = let
 maybeBisect :: (Double, State) -> (Double, State)
 maybeBisect (t, ls) | (not . bracketed) ls = (t,ls)
                     | otherwise = let
-    l  = position (lowerEval ls)
-    u  = position (upperEval ls)
-    w  = case interval ls of { (Interval tmin tmax) -> tmax - tmin }
-    t' = if w >= (bisectionWidth $ control ls) * oldWidth2 ls
-             then l + 0.5 * (u - l)
-             else t
-    ls' = ls{ oldWidth1 = w, oldWidth2 = oldWidth1 ls }
+    l = position (lowerEval ls)
+    u = position (upperEval ls)
+    w = case interval ls of { (Interval tmin tmax) -> tmax - tmin }
+    (t', ftest')
+        = if w >= (bisectionWidth $ control ls) * oldWidth2 ls
+              then (l + 0.5 * (u - l), value0 ls + t' * derivTest ls)
+              else (t,                 valueTest ls)
+    ls' = ls{ valueTest = ftest', oldWidth1 = w, oldWidth2 = oldWidth1 ls }
     in (t',ls')
 
 
