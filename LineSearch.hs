@@ -150,7 +150,7 @@ data Warning = RoundErr  -- ^ rounding errors prevent further progress
 -- a 'SearchCont'.
 data SearchCont = Converged      -- ^ the search algorithm has converged
                 | Stuck Warning  -- ^ the search algorithm is stuck
-                | InProgress !Double ((Double,Double) -> SearchCont)
+                | InProgress !Double !((Double,Double) -> SearchCont)
                                  -- ^ the search algorith is in progress;
                                  --   the first field is the next trial
                                  --   step value; the second field is
