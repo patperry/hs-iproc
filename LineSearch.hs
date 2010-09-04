@@ -168,7 +168,14 @@ searchCont :: Control
            -> SearchCont
            -- ^ result
 searchCont c fdf0 step0 = let
-    ls = initState c fdf0 step0
+    ls0 = initState c fdf0 step0
+    ls = if (not . verbose) c
+            then ls0
+            else trace ("LINESEARCH"
+                       ++ " iter: 0"
+                       ++ " value: " ++ show (value0 ls0)
+                       ++ " deriv: " ++ show (deriv0 ls0)
+                       ) ls0
     in InProgress step0 $ \(f,df) -> step (Eval step0 f df) ls
 
 
@@ -339,10 +346,11 @@ step test ls
         
     result | (not . verbose) (control ls) = id
            | otherwise =
-                 trace ("iter: " ++ show (1 + iter ls)
-                       ++ " step: " ++ show (position test)
+                 trace ("LINESEARCH"
+                       ++ " iter: " ++ show (1 + iter ls)
                        ++ " value: " ++ show (value test)
                        ++ " deriv: " ++ show (deriv test)
+                       ++ " step: " ++ show (position test)
                        )
     brackt = bracketed ls
     ftest = valueTest ls
