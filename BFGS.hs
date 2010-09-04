@@ -24,19 +24,30 @@ import qualified LineSearch as LineSearch
 import Numeric.LinearAlgebra
 
 
+rosenbrock :: Vector Double -> (Double, Vector Double, ())
+rosenbrock v = let
+    x = atVector v 0
+    y = atVector v 1
+    f =     (1-x)^^2 + 100*(y - x^^2)^^2
+    gx = -2*(1-x)    + 200*(y - x^^2) * (-2*x)
+    gy =               200*(y - x^^2)
+    g = listVector 2 [gx, gy]
+    in (f, g, ())
+
+rosenbrock0 :: Vector Double
+rosenbrock0 = listVector 2 [ 0.1, 1.0 ]
+
 data Control =
     Control {
           linesearchControl :: !LineSearch.Control
                                     -- ^ control parameters for the line
                                     --   search
-        , verbose :: !Bool          -- ^ indicates whether to print status
-                                    --   to stderr after each iterate
-                                    --   (default @False@)
+        , verbose :: !Bool
         } deriving (Show)
   
 defaultControl :: Control
 defaultControl =
-    Control { linesearchControl = LineSearch.defaultControl
+    Control { linesearchControl = LineSearch.defaultControl{ LineSearch.verbose = False }
             , verbose = True
             }
   
@@ -61,7 +72,7 @@ data State =
           , linesearch :: !((Double, Double) -> SearchCont)
           }
 
-data Warning = NoWarning
+data Warning = NoWarning deriving (Eq, Show)
 
 data MinimizeCont = Converged
                   | Stuck Warning
@@ -78,8 +89,18 @@ minimizeCont :: Control
              -> MinimizeCont
              -- ^ result
 minimizeCont c x0 fdf0 = let
-    bfgs = initState c x0 fdf0
+    bfgs0 = initState c x0 fdf0
+    bfgs = if (not . verbose) c
+               then bfgs0
+               else trace ("MINIMIZE"
+                          ++ " iter: 0"
+                          ++ " value: " ++ show (fst fdf0)
+                          ++ " dec: "
+                          ++ show (negate $ 
+                                   snd fdf0 `dotVector` searchDir bfgs0 / 2)
+                          ) bfgs0
     x = searchPos bfgs
+    
     in InProgress x $ \(f,df) -> update (Eval x f df) bfgs
 
 initState :: Control
@@ -107,7 +128,7 @@ initState c x0 (f0,g0)
                                     (f0, g0 `dotVector` dir) 1
         (x,k) = case ls0 of
                     LineSearch.InProgress t k0 ->
-                        (addVectorWithScales 1 x0 t dir, k0)
+                            (addVectorWithScales 1 x0 t dir, k0)
                     _ -> undefined
         in checkControl c $
                State { control = c
@@ -122,28 +143,26 @@ initState c x0 (f0,g0)
 
 
 update :: Eval -> State -> MinimizeCont
-update e bfgs = let
-    -- TODO: check for convergence
-    bfgs' = unsafeUpdate e bfgs
-    x' = searchPos bfgs'
-    in InProgress x' $ \(f',g') -> update (Eval x' f' g') bfgs'
-
+update e bfgs
+    | norm2Vector (gradient e) <= 1e-8 =
+        Converged
+    | otherwise = let
+        bfgs' = unsafeUpdate e bfgs
+        x' = searchPos bfgs'
+        in InProgress x' $ \(f',g') -> update (Eval x' f' g') bfgs'
 
 unsafeUpdate :: Eval -> State -> State
 unsafeUpdate e bfgs = let
-    it' = iter bfgs + 1
     dir = searchDir bfgs
     k = linesearch bfgs
-    bfgs' =
-        case k (value e, gradient e `dotVector` dir) of
-            LineSearch.Converged -> step e bfgs
-            LineSearch.Stuck _w  -> step e bfgs  
-            LineSearch.InProgress t k' -> let
+    in case k (value e, gradient e `dotVector` dir) of
+           LineSearch.Converged -> step e bfgs
+           LineSearch.Stuck _w  -> step e bfgs  
+           LineSearch.InProgress t k' -> let
                 x' = addVectorWithScales 1 (position (curEval bfgs))
                                          t (searchDir bfgs)
                 in bfgs{ searchPos = x', linesearch = k' }
-    in bfgs'{ iter = it' }
-    
+
 step :: Eval -> State -> State
 step e bfgs = let
     dx = position e `subVector` position (curEval bfgs)
@@ -163,7 +182,7 @@ step e bfgs = let
     dg_hinv_dg = hinv_dg `dotVector` dg
     hinv' = runHermMatrix $ do
                 mhinv <- withHerm hinv $ \u a -> Herm u `fmap` newCopyMatrix a
-                rank1UpdateToHermMatrix ((dg_hinv_dg/dx_dg+1)/dx_dg) dg mhinv
+                rank1UpdateToHermMatrix ((dg_hinv_dg/dx_dg+1)/dx_dg) dx mhinv
                 rank2UpdateToHermMatrix (-1/dx_dg) dx hinv_dg mhinv
                 return mhinv
     dir' = mulHermMatrixVectorWithScale (-1) hinv' (gradient e)
@@ -174,13 +193,23 @@ step e bfgs = let
                          _ -> undefined
                        
     x' = addVectorWithScales 1 (position e) t' dir'
-    in bfgs{ prevEval = curEval bfgs
-           , curEval = e
-           , invHessian = Just hinv'
-           , searchDir = dir'
-           , searchPos = x'
-           , linesearch = k'
-           }
+    bfgs' = bfgs{ iter = iter bfgs + 1
+                , prevEval = curEval bfgs
+                , curEval = e
+                , invHessian = Just hinv'
+                , searchDir = dir'
+                , searchPos = x'
+                , linesearch = k'
+                }
+    in if (not . verbose) (control bfgs)
+            then bfgs'
+            else trace ("MINIMIZE iter: " ++ show (iter bfgs')
+                        ++ " value: " ++ show (value e)
+                        ++ " dec: "
+                        ++   show (-(gradient e `dotVector` searchDir bfgs')/2)
+                        ++ " step: " ++   show (norm2Vector dx)
+                        ) bfgs'
+
 
 -- | The result of a line search.
 data Result a =
