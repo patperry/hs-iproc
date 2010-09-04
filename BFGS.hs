@@ -35,7 +35,7 @@ rosenbrock v = let
     in (f, g, ())
 
 rosenbrock0 :: Vector Double
-rosenbrock0 = listVector 2 [ 0.1, 1.0 ]
+rosenbrock0 = listVector 2 [ -1.2, 1.0 ]
 
 data Control =
     Control {
