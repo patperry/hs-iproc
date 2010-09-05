@@ -37,7 +37,6 @@ module LineSearch (
     ) where
 
 import Prelude hiding ( init )
-import Data.Maybe( fromJust, isJust )
 import Debug.Trace( trace )
 
 
@@ -70,9 +69,8 @@ data Control =
         , bisectionWidth :: !Double -- ^ minimum relative decrease in interval
                                     --   before performing bisection instead
                                     --   (default @0.66@)
-        , iterMax :: !(Maybe Int)   -- ^ maximum number of iterations, or
-                                    --   @Nothing@ if unbouned
-                                    --   (default @Nothing@)
+        , iterMax :: !Int           -- ^ maximum number of iterations
+                                    --   (default @20@)
         , verbose :: !Bool          -- ^ indicates whether to print status
                                     --   to stderr after each iterate
                                     --   (default @False@)
@@ -92,7 +90,7 @@ defaultControl =
             , extrapIntUpper = 4.0
             , extrapMax = 0.66
             , bisectionWidth = 0.66
-            , iterMax = Nothing
+            , iterMax = 20
             , verbose = False
             }
   where
@@ -120,7 +118,7 @@ checkControl c
         error $ "invalid extrapMax: `" ++ show (extrapMax c) ++ "'"
     | not (bisectionWidth c > 0 && bisectionWidth c < 1) =
         error $ "invalid bisectionWidth: `" ++ show (bisectionWidth c) ++ "'"
-    | isJust (iterMax c) && not (fromJust (iterMax c) > 0) =
+    | not (iterMax c > 0) =
         error $ "invalid iterMax: `" ++ show (iterMax c) ++ "'"
     | otherwise = id
 
@@ -148,10 +146,10 @@ data Warning = RoundErr  -- ^ rounding errors prevent further progress
 -- | A search continuation, allowing fine-grained control over objective
 -- function evaluation.  Both 'search' and 'searchM' are implemented using
 -- a 'SearchCont'.
-data SearchCont = Converged      -- ^ the search algorithm has converged
-                | Stuck Warning  -- ^ the search algorithm is stuck
+data SearchCont = Converged      -- ^ search algorithm has converged
+                | Stuck Warning  -- ^ search algorithm is stuck
                 | InProgress !Double !((Double,Double) -> SearchCont)
-                                 -- ^ the search algorith is in progress;
+                                 -- ^ search algorith is in progress:
                                  --   the first field is the next trial
                                  --   step value; the second field is
                                  --   a function which takes the value
@@ -278,7 +276,7 @@ initState c (f0,d0) step0
         error $ "initial derivative is NaN"
     | not (d0 < 0) =
         error $ "initial derivative is not negative"
-              ++ " (initial derivative is is `" ++ show d0 ++ "')"
+              ++ " (initial derivative is `" ++ show d0 ++ "')"
     | not (stepMin c <= step0) =
           error $ "invalid step: `" ++ show step0 ++ "'"
                 ++ " (stepMin is `" ++ show (stepMin c) ++ "')"
@@ -334,7 +332,7 @@ step test ls
       && (  value test > ftest
          || deriv test >= gtest ) ) =
         stuck AtStepMin
-    | isJust itmax && iter ls >= fromJust itmax =
+    | iter ls >= itmax =
         stuck AtIterMax
     | otherwise = let
         (t',ls') = update test ls
