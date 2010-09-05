@@ -100,9 +100,10 @@ data State =
 
 -- | A warning to go along with a failed minimization.
 data Warning =
-      LineSearch LineSearch.Warning -- ^ line search failed
-    | AtIterMax                     -- ^ algorithm has gone through 'iterMax'
-                                    --   iterations
+      LineSearchFailed LineSearch.Warning
+                                -- ^ line search failed
+    | AtIterMax                 -- ^ algorithm has gone through 'iterMax'
+                                --   iterations
     deriving (Eq, Show)
 
 -- | A minimization continuation, allowing fine-grained control over
@@ -202,7 +203,7 @@ update e bfgs
         Stuck AtIterMax
     | otherwise =
         case unsafeUpdate e bfgs of
-            Left w      -> Stuck (LineSearch w)
+            Left w      -> Stuck (LineSearchFailed w)
             Right bfgs' -> let
                 x' = searchPos bfgs'
                 in InProgress x' $ \(f',g') -> update (Eval x' f' g') bfgs'
