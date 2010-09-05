@@ -1,3 +1,22 @@
+-----------------------------------------------------------------------------
+-- |
+-- Module     : BFGS
+-- Copyright  : Copyright (c) 2010, Patrick Perry <patperry@gmail.com>
+-- License    : BSD3
+-- Maintainer : Patrick Perry <patperry@gmail.com>
+-- Stability  : experimental
+--
+-- Minimize a function using the Broyden-Fletcher-Goldfarb-Shanno (BFGS)
+-- method.
+--
+-- This module implements the BFGS algorithm, a quasi-Newton method
+-- for function minimization.  Note that the method finds a local optimum,
+-- which is not gauranteed to be the global optimum unless the objective
+-- function is strictly convex.  The implementation allows the user to lazily
+-- return extra state with each function evaluation, potentially storing
+-- Hessian information. The 'minimize' function returns the state at the
+-- optimal step value.
+--
 module BFGS (
     -- * Minimization parameters
     Control(..),
@@ -24,35 +43,42 @@ import qualified LineSearch as LineSearch
 import Numeric.LinearAlgebra
 
 
-rosenbrock :: Vector Double -> (Double, Vector Double, ())
-rosenbrock v = let
-    x = atVector v 0
-    y = atVector v 1
-    f =     (1-x)^^2 + 100*(y - x^^2)^^2
-    gx = -2*(1-x)    + 200*(y - x^^2) * (-2*x)
-    gy =               200*(y - x^^2)
-    g = listVector 2 [gx, gy]
-    in (f, g, ())
-
-rosenbrock0 :: Vector Double
-rosenbrock0 = listVector 2 [ -1.2, 1.0 ]
-
+-- | Parameters for the minimization.
 data Control =
     Control {
           linesearchControl :: !LineSearch.Control
                                     -- ^ control parameters for the line
                                     --   search
-        , verbose :: !Bool
+        , gradTol :: !Double        -- ^ maximum Euclidean norm of the 
+                                    --   gradient before declaring
+                                    --   convergence; the minimization
+                                    --   algorithm stops when
+                                    --   @||g|| <= gradTol * max(1, ||x||)@,
+                                    --   where @g@ is the gradient and
+                                    --   @x@ is the position
+        , iterMax :: !Int           -- ^ maximum number of iterations
+                                    --   (default @100@)
+        , verbose :: !Bool          -- ^ indicates whether to print status
+                                    --   to stderr after each iterate
+                                    --   (default @False@)
         } deriving (Show)
   
+-- | Default minimization parameters, as specified in the documentation for
+-- 'Control'.
 defaultControl :: Control
 defaultControl =
-    Control { linesearchControl = LineSearch.defaultControl{ LineSearch.verbose = False }
-            , verbose = True
+    Control { linesearchControl = LineSearch.defaultControl
+            , gradTol = 1e-5
+            , iterMax = 100
+            , verbose = False
             }
   
 checkControl :: Control -> a -> a
-checkControl _c
+checkControl c
+    | not (gradTol c >= 0) =
+        error $ "invalid gradTol: `" ++ show (gradTol c) ++ "'"
+    | not (iterMax c > 0) =
+        error $ "invalid iterMax: `" ++ show (iterMax c) ++ "'"
     | otherwise = id
     
 data Eval =
@@ -72,12 +98,26 @@ data State =
           , linesearch :: !((Double, Double) -> SearchCont)
           }
 
-data Warning = NoWarning deriving (Eq, Show)
+-- | A warning to go along with a failed minimization.
+data Warning =
+      LineSearch LineSearch.Warning -- ^ line search failed
+    | AtIterMax                     -- ^ algorithm has gone through 'iterMax'
+                                    --   iterations
+    deriving (Eq, Show)
 
-data MinimizeCont = Converged
-                  | Stuck Warning
-                  | InProgress !(Vector Double)
-                               !((Double, Vector Double) -> MinimizeCont)
+-- | A minimization continuation, allowing fine-grained control over
+-- objective function evaluation. Both 'minimize' and 'minimizeM' are
+-- implemented using a 'MinimizeCont'.
+data MinimizeCont =
+      Converged      -- ^ minimization algorithm has converged
+    | Stuck Warning  -- ^ minimization alrorithm is stuck
+    | InProgress !(Vector Double)
+                 !((Double, Vector Double) -> MinimizeCont)
+                     -- ^ minimization algorithm is in progress: the
+                     --   first field is the next trial position; the
+                     --   second field is a function which takes the
+                     --   value and gradient at the trial position a
+                     --   returns a new continuation
 
 -- | Returns a minimization continuation initialized with the given values.
 minimizeCont :: Control
@@ -110,12 +150,12 @@ initState :: Control
 initState c x0 (f0,g0)
     | any isNaN $ elemsVector x0 =
         error $ "component of initial position is NaN"
-              ++ " (initial position is is `" ++ show x0 ++ "')"        
+              ++ " (initial position is `" ++ show x0 ++ "')"        
     | isNaN f0 =
         error $ "initial value is NaN"
     | any isNaN $ elemsVector g0 =
         error $ "component of initial gradient is NaN"
-              ++ " (initial gradient is is `" ++ show g0 ++ "')"
+              ++ " (initial gradient is `" ++ show g0 ++ "')"
     | dimVector x0 /= dimVector g0 =
         error $ "position dimension (`" ++ show (dimVector x0) ++ "')"
               ++ " and gradient dimension (`" ++ show (dimVector g0) ++ "')"
@@ -141,27 +181,43 @@ initState c x0 (f0,g0)
                      , linesearch = k
                      }
 
-
 update :: Eval -> State -> MinimizeCont
 update e bfgs
-    | norm2Vector (gradient e) <= 1e-8 =
+    | isNaN (value e) =
+        error $ "function value is NaN"
+    | any isNaN $ elemsVector (gradient e) =
+        error $ "component of gradient is NaN"
+              ++ " (gradient is `" ++ show (gradient e) ++ "')"
+    | dimVector (position e) /= dimVector (gradient e) =
+        error $ "position dimension (`"
+              ++ show (dimVector $ position e) ++ "')"
+              ++ " and gradient dimension (`"
+              ++ show (dimVector $ gradient e) ++ "')"
+              ++ " do not match"
+    | (norm2Vector (gradient e)
+           < gradTol (control bfgs) * 
+                 max 1 (norm2Vector (position e))) =
         Converged
-    | otherwise = let
-        bfgs' = unsafeUpdate e bfgs
-        x' = searchPos bfgs'
-        in InProgress x' $ \(f',g') -> update (Eval x' f' g') bfgs'
+    | iter bfgs >= iterMax (control bfgs) =
+        Stuck AtIterMax
+    | otherwise =
+        case unsafeUpdate e bfgs of
+            Left w      -> Stuck (LineSearch w)
+            Right bfgs' -> let
+                x' = searchPos bfgs'
+                in InProgress x' $ \(f',g') -> update (Eval x' f' g') bfgs'
 
-unsafeUpdate :: Eval -> State -> State
+unsafeUpdate :: Eval -> State -> Either LineSearch.Warning State
 unsafeUpdate e bfgs = let
     dir = searchDir bfgs
     k = linesearch bfgs
     in case k (value e, gradient e `dotVector` dir) of
-           LineSearch.Converged -> step e bfgs
-           LineSearch.Stuck _w  -> step e bfgs  
+           LineSearch.Converged -> Right $ step e bfgs
+           LineSearch.Stuck w   -> Left w
            LineSearch.InProgress t k' -> let
                 x' = addVectorWithScales 1 (position (curEval bfgs))
                                          t (searchDir bfgs)
-                in bfgs{ searchPos = x', linesearch = k' }
+                in Right $ bfgs{ searchPos = x', linesearch = k' }
 
 step :: Eval -> State -> State
 step e bfgs = let
@@ -211,16 +267,19 @@ step e bfgs = let
                         ) bfgs'
 
 
--- | The result of a line search.
+-- | The result of a minimization.
 data Result a =
-    Result { resultIter  :: !Int             -- ^ iterate number
+    Result { evalCount   :: !Int             -- ^ number of function evalutations
            , resultPos   :: !(Vector Double) -- ^ position
            , resultValue :: !Double          -- ^ function value
            , resultGrad  :: !(Vector Double) -- ^ function gradient
            , resultState :: a                -- ^ extra state (lazy)
            }
-    deriving (Eq, Show)
+    deriving (Show)
 
+-- | Minimize a differentiable function.  Upon success return 'Right' and the
+-- (local) optimum; upon failure return 'Left' with a warning and the best
+-- solution obtained during the minimization.
 minimize :: Control
          -- ^  minimization parameters
          -> (Vector Double -> (Double, Vector Double, a))
@@ -277,7 +336,7 @@ convergeM fdf i (e,a) k =
                 e' = Eval step' f' df'
             i' `seq` e' `seq` convergeM fdf i' (e',a') k'
   where
-    result = Result { resultIter = i
+    result = Result { evalCount = i
                     , resultPos = position e
                     , resultValue = value e
                     , resultGrad = gradient e
@@ -286,6 +345,23 @@ convergeM fdf i (e,a) k =
 
 -- $references
 --
+-- * Broyden, C. G. (1970) The convergence of a class of double-rank
+--   minimization algorithms.
+--   /Journal of the Institute of Mathematics and its Applications/
+--   6(1): 76&#8211;90. <http://dx.doi.org/10.1093/imamat/6.1.76>
+--
+-- * Fletcher, R. (1970) A new approach to variable metric algorithms.
+--   /The Computer Journal/ 13(3): 317&#8211;322.
+--   <http://dx.doi.org/10.1093/comjnl/13.3.317>
+--
+-- * Goldfarb, D. (1970) A family of variable metric updates derived
+--   by variational means. /Mathematics of Computation/ 24(109): 23&#8211;26.
+--   <http://dx.doi.org/10.1090/S0025-5718-1970-0258249-6>
+--
 -- * Nocedal, J. and Wright, S. J. (2006) /Numerical Optimization/, 2nd ed.
 --   Springer. <http://www.springer.com/mathematics/book/978-0-387-30303-1>
+--
+-- * Shanno, D. F. (1970) Conditioning of quasi-Newton methods for function
+--   minimization. /Mathematics of Compututaiton/ 24(111): 647&#8211;656.
+--   <http://dx.doi.org/10.1090/S0025-5718-1970-0274029-X>
 --
