@@ -2,10 +2,12 @@ module Main
     where
         
 import Data.Ratio( approxRational, (%) )
+import Numeric.LinearAlgebra
 import Test.Framework
 import Test.Framework.Providers.HUnit
 import Test.HUnit
 
+import qualified BFGS as BFGS
 import qualified LineSearch as LineSearch
 
 
@@ -184,6 +186,43 @@ yanai beta1 beta2 alpha =
     gamma beta = sqrt (1 + beta^^2) - beta
 
 
+tests_BFGS = testGroup "BFGS"
+    [ test_rosenbrock
+    ]
+
+rosenbrock :: Vector Double -> (Double, Vector Double, ())
+rosenbrock v = let
+    x = atVector v 0
+    y = atVector v 1
+    f =     (1-x)^^2 + 100*(y - x^^2)^^2
+    gx = -2*(1-x)    + 200*(y - x^^2) * (-2*x)
+    gy =               200*(y - x^^2)
+    g = listVector 2 [gx, gy]
+    in (f, g, ())
+
+rosenbrock0 :: Vector Double
+rosenbrock0 = listVector 2 [ -1.2, 1.0 ]
+
+test_rosenbrock = testGroup "Rosenbrock"
+    [ testCase "value" $
+          case result of
+              Right r -> trunc2 (BFGS.resultValue r) @?= 7.7e-15
+              Left r -> assertFailure $ "Warning: " ++ show r
+    , testCase "position" $ 
+          case result of
+              Right r -> ( trunc2 (atVector (BFGS.resultPos r) 0)
+                         , trunc2 (atVector (BFGS.resultPos r) 1)
+                         ) @?= (1.0, 1.0)
+              Left r -> assertFailure $ "Warning: " ++ show r                         
+    ]
+  where
+    c  = BFGS.defaultControl
+    f  = rosenbrock
+    x0 = rosenbrock0
+    result = BFGS.minimize c f x0 (f x0)
+    
+
 main :: IO ()
 main = defaultMain [ tests_LineSearch
+                   , tests_BFGS
                    ]
