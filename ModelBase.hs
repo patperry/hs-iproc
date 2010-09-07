@@ -130,7 +130,7 @@ logWeightChanges m h s =
         Vars.mulSenderChangesBy (coefs m) (vars m) h s
 
 prob :: Model -> History -> SenderId -> ReceiverId -> Double
-prob m h s r = min 1 $ exp (logProb m h s r)
+prob m h s r = exp (logProb m h s r)
 
 logProb :: Model -> History -> SenderId -> ReceiverId -> Double
 logProb m h s r = let
@@ -141,7 +141,7 @@ logProb m h s r = let
             else (lw - lw_max) - nlp_max
 
 probs :: Model -> History -> SenderId -> [(ReceiverId, Double)]
-probs m h s = [ (r, min 1 $ exp lp) | (r,lp) <- logProbs m h s ]
+probs m h s = [ (r, exp lp) | (r,lp) <- logProbs m h s ]
 
 logProbs :: Model -> History -> SenderId -> [(ReceiverId, Double)]
 logProbs m h s = let

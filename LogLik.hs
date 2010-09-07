@@ -1,6 +1,7 @@
 module LogLik (
     LogLik,
     fromMessages,
+    model,
     
     deviance,
     nullDeviance,   
@@ -16,6 +17,7 @@ module LogLik (
     
     ) where
 
+import Debug.Trace( trace )
 import Data.List( foldl' )
 import Data.Map( Map )
 import qualified Data.Map as Map
@@ -43,8 +45,9 @@ data SenderLogLik =
                  , sendCount :: !Int
                  , receiveCount :: !(Map ReceiverId Int)
                  , observedVarChanges :: !(Map Int Double)
-                 , sumLogWeight :: !Double
+                 , valueSLL :: !Double
                  , sumInvWeight :: !Double
+                 , sumInvWeightLogScale :: !Double
                  , receiverWeights :: !(Map ReceiverId Double)
                  , expectedVarChanges :: !(Map Int Double)
                  }
@@ -75,13 +78,14 @@ expectedVarsSLL sll = let
 
 expectedReceiverCountsSLL :: SenderLogLik -> [(ReceiverId, Double)]
 expectedReceiverCountsSLL sll =
-    [ (r, Map.findWithDefault (siw * Model.prob m h0 s r) r rws)
+    [ (r, exp (Model.logProb m h0 s r + scale)
+          + Map.findWithDefault 0 r rws)
     | r <- Model.validReceivers m s
     ]
   where
     m = senderModel sll
     s = sender sll
-    siw = sumInvWeight sll
+    scale = log (sumInvWeight sll) - sumInvWeightLogScale sll
     rws = receiverWeights sll
     h0 = History.empty
 
@@ -89,56 +93,83 @@ valueGradSLL :: SenderLogLik -> (Double, Vector Double)
 valueGradSLL sll =
     let x = observedVarsSLL sll
         mu = expectedVarsSLL sll
-        n = fromIntegral $ sendCount sll
-        scale = Model.logSumWeights m h0 s
-        f = x `dotVector` beta - (sumLogWeight sll + n * scale)
+        f = valueSLL sll
         g = x `subVector` mu
-    in f `seq` (f, g)
-  where
-    m = senderModel sll
-    s = sender sll
-    beta = Model.coefs m
-    h0 = History.empty
+    in if any isNaN (elemsVector g)
+            then error ("NaN Grad\n  obs: " ++ show (elemsVector x)
+                        ++ "\n  exp: " ++ show (elemsVector mu))
+            else (f, g)
 
 unionSLL :: SenderLogLik -> SenderLogLik -> SenderLogLik
-unionSLL (SenderLogLik m s sc1 rc1 ovc1 slw1 siw1 rwc1 evc1)
-         (SenderLogLik _ _ sc2 rc2 ovc2 slw2 siw2 rwc2 evc2) =
-    SenderLogLik m s
-                 ((+) sc1 sc2)
-                 (unionWith' (+) rc1 rc2)
-                 (unionWith' (+) ovc1 ovc2)
-                 ((+) slw1 slw2)
-                 ((+) siw1 siw2)
-                 (unionWith' (+) rwc1 rwc2)
-                 (unionWith' (+) evc1 evc2)
+unionSLL (SenderLogLik m s sc1 rc1 ovc1 v1 siw1 logscale1 rw1 evc1)
+         (SenderLogLik _ _ sc2 rc2 ovc2 v2 siw2 logscale2 rw2 evc2) = let
+    (siw, logscale) = if logscale1 <= logscale2
+                          then ( siw1 + siw2 * exp (logscale1 - logscale2)
+                               , logscale1 )
+                          else ( siw1 * exp (logscale2 - logscale1) + siw2 
+                               , logscale2 )
+    in SenderLogLik m s
+                    ((+) sc1 sc2)
+                    (unionWith' (+) rc1 rc2)
+                    (unionWith' (+) ovc1 ovc2)
+                    ((+) v1 v2)
+                    siw logscale
+                    (unionWith' (+) rw1 rw2)
+                    (unionWith' (+) evc1 evc2)
+
+
 
 singletonSLL :: Model -> SenderId -> ([ReceiverId], History) -> SenderLogLik
 singletonSLL m s (rs, h) = let
     sc = length rs
     rc = Map.fromList $ zip rs (repeat 1)
     ovc = foldl' (flip $ uncurry $ Map.insertWith' (+)) Map.empty $
-              concatMap (Vars.dyadChanges v h s) rs
-    rwds = [ let p0 = Model.prob m h0 s r 
-                 w = p0 * exp d
-             in (r, w, w - p0)
-           | (r,d) <- Vars.mulSenderChangesBy beta v h s
-           , Model.validDyad m s r
-           ]
-    sum_d = foldl' (+) 0 [ d | (_,_,d) <- rwds ]
-    sum_w = 1 + sum_d
-    slw = ((fromIntegral sc *) . log) sum_w
-    siw = fromIntegral sc / sum_w
-    rws = [ (r, w * siw) | (r,w,_) <- rwds ]
-    rwc = Map.fromList rws
-    evc = Map.fromList $ Vars.weightReceiverChangesBy rws v h s
-    in SenderLogLik m s sc rc ovc slw siw rwc evc
+              concatMap (Vars.dyadChanges vars h s) rs
+
+    (active, dlws) = unzip [ (r,dlw)
+                           | (r,dlw) <- Vars.mulSenderChangesBy beta vars h s
+                           , Model.validDyad m s r
+                           ]
+    logscale = foldl' max 0 dlws
+    invscale = exp (-logscale)
+    dlws' = [ dlw - logscale | dlw <- dlws ]
+
+    lp0s = map (Model.logProb m h0 s) active
+    p0s = map exp lp0s
+    lws' = [ lp0 + dlw' | (lp0, dlw') <- zip lp0s dlws' ]
+    dws' = [ p0 * (exp dlw' - invscale) | (p0, dlw') <- zip p0s dlws' ]
+
+    sum_w' = invscale + foldl' (+) 0 dws'
+    log_sum_w' = log sum_w'
+    log_sum_w = log_sum_w' + logscale
+    lps = [ lw' - log_sum_w' | lw' <- lws' ]
+    
+    v = foldl' (+) 0 [ findWithDefault (Model.logProb m h0 s r - log_sum_w)
+                                       r
+                                       (zip active lps)
+                     | r <- rs
+                     ]
+
+    siw = fromIntegral sc / sum_w'
+    ps = map exp lps
+    dps = [ p - exp (lp0 - log_sum_w) | (p,lp0) <- zip ps lp0s ]
+    rw = Map.fromList $
+             [ (r, fromIntegral sc * dp) | (r,dp) <- zip active dps ]
+    evc = Map.fromList $
+               Vars.weightReceiverChangesBy
+               [ (r, fromIntegral sc * p) | (r,p) <- zip active ps ]
+               vars h s
+    in SenderLogLik m s sc rc ovc v siw logscale rw evc
   where
-    v = Model.vars m
+    vars = Model.vars m
     beta = Model.coefs m
     h0 = History.empty
+    findWithDefault a0 k kas = case lookup k kas of Just a  -> a
+                                                    Nothing -> a0
+
 
 emptySLL :: Model -> SenderId -> SenderLogLik
-emptySLL m s = SenderLogLik m s 0 Map.empty Map.empty 0 0 Map.empty Map.empty
+emptySLL m s = SenderLogLik m s 0 Map.empty Map.empty 0 0 0 Map.empty Map.empty
 
 insertSLL :: ([ReceiverId], History) -> SenderLogLik -> SenderLogLik
 insertSLL msg sll =
@@ -159,9 +190,17 @@ grad = snd . valueGrad
 valueGrad :: LogLik -> (Double, Vector Double)
 valueGrad (LogLik m _ sllm) = let
     (fs,gs) = unzip $ map valueGradSLL $ Map.elems sllm
-    f = foldl' (+) 0 fs
+    f = stableSum 0 0 fs -- foldl' (+) 0 fs
     g = sumVector (Vars.dim $ Model.vars m) gs
     in g `seq` f `seq` (f, g)
+  where
+    stableSum acc err []     = acc + err
+    stableSum acc err (x:xs) = let
+        x'   = err + x
+        acc' = acc + x'
+        diff = acc - acc'
+        err' = diff + x
+        in acc' `seq` err' `seq` stableSum acc' err' xs
 
 deviance :: LogLik -> Double
 deviance = fst . devianceScore
