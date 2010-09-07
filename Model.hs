@@ -47,6 +47,7 @@ import qualified History as History
 data Model =
     Model { base :: !(Base.Model)
           , staticProbs :: !(Map (SenderId, ReceiverId) Double)
+          , staticLogProbs :: !(Map (SenderId, ReceiverId) Double)          
           }
     deriving (Show)
 
@@ -55,7 +56,9 @@ fromBase m = let
     h0 = History.empty
     sps = Map.fromList [ ((s,r),p) | s <- Base.senders m
                                    , (r,p) <- Base.probs m h0 s ]
-    in Model m sps
+    slps = Map.fromList [ ((s,r),lp) | s <- Base.senders m
+                                     , (r,lp) <- Base.logProbs m h0 s ]
+    in Model m sps slps
 
 fromVars :: Vars -> Vector Double -> Loops -> Model
 fromVars v c l =
@@ -117,7 +120,11 @@ prob m h s r
     | otherwise      = Base.prob (base m) h s r
 
 logProb :: Model -> History -> SenderId -> ReceiverId -> Double
-logProb = Base.logProb . base
+logProb m h s r
+    | History.null h = Map.findWithDefault (neginf) (s,r) $ staticLogProbs m
+    | otherwise      = Base.logProb (base m) h s r
+  where
+    neginf = -1/0
 
 probs :: Model -> History -> SenderId -> [(ReceiverId, Double)]
 probs = Base.probs . base

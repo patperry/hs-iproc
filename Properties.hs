@@ -863,6 +863,7 @@ prop_LogLik_singleton_grad (ModelWithMessageAndHistory m (msg,h)) =
     v = Model.vars m
     mu = Model.meanVars m h s
 
+{-
 prop_LogLik_doubleton_grad =
     forAll (resize 2 $ arbitrary) $ \(ModelWithMessageAndHistory2 m mh1 mh2) -> let
         ll1 = LogLik.fromMessages m [ mh1 ]
@@ -875,14 +876,13 @@ prop_LogLik_doubleton_grad =
                 else trace ("\nll1: " ++ show ll1
                             ++ "\nll2: " ++ show ll2
                             ++ "\nll: " ++ show ll) False
+-}
 
-{-
 prop_LogLik_doubleton_grad (ModelWithMessageAndHistory2 m mh1 mh2) = let
     grad1 = LogLik.grad $ LogLik.fromMessages m [ mh1 ]
     grad2 = LogLik.grad $ LogLik.fromMessages m [ mh2 ]
     grad = LogLik.grad $ LogLik.fromMessages m [ mh1, mh2 ]
     in grad `verboseAEq` (grad1 `addVector` grad2)
--}
 
 
 main :: IO ()

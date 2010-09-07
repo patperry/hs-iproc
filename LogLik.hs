@@ -1,3 +1,4 @@
+{-# LANGUAGE ForeignFunctionInterface #-}
 module LogLik (
     LogLik,
     fromMessages,
@@ -97,7 +98,9 @@ valueGradSLL sll =
         g = x `subVector` mu
     in if any isNaN (elemsVector g)
             then error ("NaN Grad\n  obs: " ++ show (elemsVector x)
-                        ++ "\n  exp: " ++ show (elemsVector mu))
+                        ++ "\n  exp: " ++ show (elemsVector mu)
+                        ++ "\n  ecounts: " ++ show (expectedReceiverCountsSLL sll)
+                        )
             else (f, g)
 
 unionSLL :: SenderLogLik -> SenderLogLik -> SenderLogLik
@@ -126,23 +129,48 @@ singletonSLL m s (rs, h) = let
     ovc = foldl' (flip $ uncurry $ Map.insertWith' (+)) Map.empty $
               concatMap (Vars.dyadChanges vars h s) rs
 
+    -- active receiver set and difference in log-weights
     (active, dlws) = unzip [ (r,dlw)
                            | (r,dlw) <- Vars.mulSenderChangesBy beta vars h s
                            , Model.validDyad m s r
                            ]
+                           
+    -- rescale differences in log-weights
     logscale = foldl' max 0 dlws
     invscale = exp (-logscale)
     dlws' = [ dlw - logscale | dlw <- dlws ]
 
+    -- initial log-probabilities and probabilities
     lp0s = map (Model.logProb m h0 s) active
     p0s = map exp lp0s
+    
+    -- log (scaled weights)
     lws' = [ lp0 + dlw' | (lp0, dlw') <- zip lp0s dlws' ]
-    dws' = [ p0 * (exp dlw' - invscale) | (p0, dlw') <- zip p0s dlws' ]
+    
+    -- log (difference of weights)
+    ldws'_p = [ lp0 + log (exp dlw' - invscale)
+              | (lp0, dlw') <- zip lp0s dlws'
+              , dlw' >= -logscale ]
+    ldws'_n = [ lp0 + log (invscale - exp dlw')
+              | (lp0, dlw') <- zip lp0s dlws'
+              , dlw' < -logscale ]
+           
+    -- sum of scaled weights
+    max_ldw'_p = foldl' max (-logscale) ldws'_p
+    log_sum_w'_p = log (exp(-logscale - max_ldw'_p)
+                       + foldl' (+) 0 [ exp (ldw'_p - max_ldw'_p) | ldw'_p <- ldws'_p ])
+                   + max_ldw'_p
+    max_ldw'_n = foldl' max (-1/0) ldws'_n
+    log_sum_w'_n = max_ldw'_n
+                   + if (not . isInfinite) max_ldw'_n
+                         then log (foldl' (+) 0 [ exp (ldw'_n - max_ldw'_n)
+                                                | ldw'_n <- ldws'_n ])
+                         else 0
+    log_sum_w' = log_sum_w'_p + log1p (-exp (log_sum_w'_n - log_sum_w'_p))
+       
 
-    sum_w' = invscale + foldl' (+) 0 dws'
-    log_sum_w' = log sum_w'
     log_sum_w = log_sum_w' + logscale
-    lps = [ lw' - log_sum_w' | lw' <- lws' ]
+    lps = [ min 0 (lw' - log_sum_w') | lw' <- lws' ]
     
     v = foldl' (+) 0 [ findWithDefault (Model.logProb m h0 s r - log_sum_w)
                                        r
@@ -150,8 +178,9 @@ singletonSLL m s (rs, h) = let
                      | r <- rs
                      ]
 
-    siw = fromIntegral sc / sum_w'
     ps = map exp lps
+    siw = fromIntegral sc
+    siwscale = logscale + log_sum_w'
     dps = [ p - exp (lp0 - log_sum_w) | (p,lp0) <- zip ps lp0s ]
     rw = Map.fromList $
              [ (r, fromIntegral sc * dp) | (r,dp) <- zip active dps ]
@@ -159,17 +188,49 @@ singletonSLL m s (rs, h) = let
                Vars.weightReceiverChangesBy
                [ (r, fromIntegral sc * p) | (r,p) <- zip active ps ]
                vars h s
-    in SenderLogLik m s sc rc ovc v siw logscale rw evc
+    in (if (not $ and [ p >= 0 && p <= 1 | p <- ps ]) 
+                || isInfinite siw
+                || isInfinite siwscale
+            then trace (  ""
+                          ++ "\ndlws: " ++ show dlws
+                          ++ "\nlogscale: " ++ show logscale
+                          ++ "\ninvscale: " ++ show invscale
+                          ++ "\ndlws': " ++ show dlws'
+                          ++ "\nlp0s: " ++ show lp0s
+                          ++ "\np0s: " ++ show p0s
+                          ++ "\nlws': " ++ show lws'
+                          ++ "\nldws'_p: " ++ show ldws'_p
+                          ++ "\nldws'_n: " ++ show ldws'_n
+                          ++ "\nlog_sum_w'_p: " ++ show log_sum_w'_p
+                          ++ "\nlog_sum_w'_n: " ++ show log_sum_w'_n
+                          ++ "\nlog_sum_w': " ++ show log_sum_w'                       
+                          ++ "\nlog_sum_w: " ++ show log_sum_w
+                          ++ "\nlps: " ++ show lps
+                          ++ "\nv: " ++ show v
+                          ++ "\nps: " ++ show ps
+                          ++ "\nsiw: " ++ show siw
+                          ++ "\nsiwscale: " ++ show siwscale
+                          ++ "\ndps: " ++ show dps
+                          )
+               else id)
+        SenderLogLik m s sc rc ovc v siw siwscale rw evc
   where
     vars = Model.vars m
     beta = Model.coefs m
     h0 = History.empty
     findWithDefault a0 k kas = case lookup k kas of Just a  -> a
                                                     Nothing -> a0
+foreign import ccall unsafe "expm1"
+    expm1 :: Double -> Double
+
+foreign import ccall unsafe "log1p"
+    log1p :: Double -> Double
 
 
 emptySLL :: Model -> SenderId -> SenderLogLik
-emptySLL m s = SenderLogLik m s 0 Map.empty Map.empty 0 0 0 Map.empty Map.empty
+emptySLL m s = SenderLogLik m s 0 Map.empty Map.empty 0 1 inf Map.empty Map.empty
+  where
+    inf = 1/0
 
 insertSLL :: ([ReceiverId], History) -> SenderLogLik -> SenderLogLik
 insertSLL msg sll =
