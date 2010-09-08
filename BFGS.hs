@@ -49,12 +49,23 @@ data Control =
           linesearchControl :: !LineSearch.Control
                                     -- ^ control parameters for the line
                                     --   search
+        , relTol :: !Double         -- ^ maximum relative difference in
+                                    --   consecutive function values
+                                    --   before declaring convergence
+                                    --   (default 1.490116119384766e-08)
+        , absTol :: !Double         -- ^ maximum absolute difference in
+                                    --   function values before declaring
+                                    --   convergence
+                                    --   (default 2.220446049250313e-16)
+                                    
+{-                                    
         , gradTol :: !Double        -- ^ maximum Euclidean norm of the 
                                     --   gradient before declaring
                                     --   convergence; the minimization
                                     --   algorithm stops when
                                     --   @||g|| <= gradTol * max(1, ||x||)@,
                                     --   where @g@ is the gradient and
+-}
                                     --   @x@ is the position
         , iterMax :: !Int           -- ^ maximum number of iterations
                                     --   (default @100@)
@@ -68,15 +79,18 @@ data Control =
 defaultControl :: Control
 defaultControl =
     Control { linesearchControl = LineSearch.defaultControl
-            , gradTol = 1e-5
+            , relTol = 1.490116119384766e-08
+            , absTol = 2.220446049250313e-16
             , iterMax = 100
             , verbose = False
             }
   
 checkControl :: Control -> a -> a
 checkControl c
-    | not (gradTol c >= 0) =
-        error $ "invalid gradTol: `" ++ show (gradTol c) ++ "'"
+    | not (relTol c >= 0) =
+        error $ "invalid relTol: `" ++ show (relTol c) ++ "'"
+    | not (absTol c >= 0) =
+        error $ "invalid absTol: `" ++ show (absTol c) ++ "'"
     | not (iterMax c > 0) =
         error $ "invalid iterMax: `" ++ show (iterMax c) ++ "'"
     | otherwise = id
@@ -195,10 +209,16 @@ update e bfgs
               ++ " and gradient dimension (`"
               ++ show (dimVector $ gradient e) ++ "')"
               ++ " do not match"
+    | valDiff < relTol (control bfgs) * abs (value e) =
+        Converged
+    | valDiff < absTol (control bfgs) =
+        Converged
+{-        
     | (norm2Vector (gradient e)
            < gradTol (control bfgs) * 
                  max 1 (norm2Vector (position e))) =
         Converged
+-}
     | iter bfgs >= iterMax (control bfgs) =
         Stuck AtIterMax
     | otherwise =
@@ -207,6 +227,8 @@ update e bfgs
             Right bfgs' -> let
                 x' = searchPos bfgs'
                 in InProgress x' $ \(f',g') -> update (Eval x' f' g') bfgs'
+  where
+    valDiff = abs (value e - value (curEval bfgs))
 
 unsafeUpdate :: Eval -> State -> Either LineSearch.Warning State
 unsafeUpdate e bfgs = let
