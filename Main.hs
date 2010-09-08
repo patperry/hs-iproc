@@ -3,7 +3,7 @@ module Main
     where
 
 import Debug.Trace( trace )
-import Data.List( foldl' )
+import Data.List( foldl', nub, sort, (\\) )
 import qualified Data.Map as Map
 import Database.HDBC
 import Database.HDBC.Sqlite3
@@ -24,6 +24,7 @@ import qualified Intervals as Intervals
 import qualified History as History
 import qualified Model as Model
 import qualified LogLik as LogLik
+import qualified Summary as Summary
 import qualified Vars as Vars
 
      
@@ -32,26 +33,37 @@ fromEmail (Email _ _ time _ f ts) =
     (time, Message f ts)
 
 fromEmployee :: Bool -> Employee -> (ActorId, Vector Double)
-fromEmployee intercept (Employee eid _ _ _ g s d) =
-    let f = if g == Female then 1 else 0
-        j = if s == Junior then 1 else 0
-        l = if d == Legal then 1 else 0
-        t = if d == Trading then 1 else 0
-        xs = withInt [ f, j, l, t, f*j, f*l, f*t, j*l, j*t, f*j*l, f*j*t ]
+fromEmployee intercept (Employee eid _ _ _ gen sen dep) =
+    let f = if gen == Female then 1 else 0
+        m = if gen == Male then 1 else 0
+        j = if sen == Junior then 1 else 0
+        s = if sen == Senior then 1 else 0
+        l = if dep == Legal then 1 else 0
+        t = if dep == Trading then 1 else 0
+        o = if dep == Other then 1 else 0
+        xs = [ f*j*l, m*j*l, f*s*l, m*s*l
+             , f*j*t, m*j*t, f*s*t, m*s*t
+             , f*j*o, m*j*o, f*s*o, m*s*o
+             ]
+        --xs = withInt [ f, j, l, t, f*j, f*l, f*t, j*l, j*t, f*j*l, f*j*t ]
         p = length xs
     in (eid, listVector p xs)
   where
     withInt = if intercept then (1:) else id
 
 sendIntervals :: Intervals
+sendIntervals = Intervals.fromList []
+{-
+sendIntervals :: Intervals
 sendIntervals = Intervals.fromList $
     map (fromIntegral . floor . (3600*) . (2^^)) $    
         [ -7..2 ] ++ [ 4..13 ]
+-}
 
 receiveIntervals :: Intervals
 receiveIntervals = Intervals.fromList $
     map (fromIntegral . floor . (3600*) . (2^^)) $
-        [ -7..11 ]
+        [ -6..14 ]
 
 {-
 fromEmployee :: Employee -> (ActorId, Actor)
@@ -84,57 +96,88 @@ getLogLik conn m = do
     return $! LogLik.fromMessages m mhs
 
 optWithPenalty :: Double
-               -> Model
-               -> [(Message, History)]
-               -> Either (BFGS.Warning, BFGS.Result LogLik)
-                         (BFGS.Result LogLik)
-optWithPenalty penalty m0 mhs = let
-    beta0 = Model.coefs m0
-    loops = if Model.hasLoops m0 then Model.Loops else Model.NoLoops
-    nll beta = let m = Model.fromVars (Model.vars m0) beta loops
-                   ll = LogLik.fromMessages m mhs
-                   (f,g) = LogLik.valueGrad ll
-                   df = fromIntegral $ LogLik.residDf ll
-               in ( -2*f/df + (penalty/df) * (beta `dotVector` beta)
-                  , addVectorWithScales (-2/df) g (2*penalty/df) beta
-                  , ll
-                  )
+               -> (Vector Double -> (Double, Vector Double, a))
+               -> Vector Double
+               -> (Double, Vector Double, a)
+               -> Either (BFGS.Warning, BFGS.Result a)
+                         (BFGS.Result a)
+optWithPenalty penalty fdf x0 (f0,df0,a0) = let
+    f' x = let (f,df,a) = fdf x
+           in  ( f + 0.5 * penalty * x `dotVector` x
+               , addVectorWithScales 1 df penalty x
+               , a
+               )
+    f0'  = f0 + 0.5 * penalty * x0 `dotVector` x0
+    df0' = addVectorWithScales 1 df0 penalty x0
     
     opt = BFGS.minimize BFGS.defaultControl{
                                 BFGS.linesearchControl =
                                       LineSearch.defaultControl{
                                             LineSearch.verbose = True
-                                          , LineSearch.valueTol = 0.01
+                                          , LineSearch.valueTol = 1e-2
                                           , LineSearch.derivTol = 0.1
+                                          , LineSearch.stepMin = 1e-10
                                       }
                                 , BFGS.iterMax = 10000
-                                , BFGS.gradTol = 1e-5
                                 , BFGS.verbose = True }
-                          nll beta0 (nll beta0)
-    
-    in opt
+                          f' x0 (f0',df0',a0)
+
+    in case opt of
+           Left (w,r) -> Left (w, unPenalty r)
+           Right r    -> Right (unPenalty r)
+  where
+    unPenalty r = let
+        x  = BFGS.resultPos r
+        f  = BFGS.resultValue r
+        df = BFGS.resultGrad r
+        in r{ BFGS.resultValue = f - 0.5 * penalty * x `dotVector` x
+            , BFGS.resultGrad  = addVectorWithScales 1 df (-penalty) x
+            }
 
 optWithPenaltyShrink :: Double
                      -> Double
-                     -> Model
-                     -> [(Message, History)]
-                     -> Maybe (Double, BFGS.Result LogLik)
+                     -> (Vector Double -> (Double, Vector Double, a))
+                     -> Vector Double
+                     -> (Double, Vector Double, a)
+                     -> Maybe (Double, BFGS.Result a)
 optWithPenaltyShrink = go Nothing
   where
-    go prev shrink penalty0 m0 mhs =
-        case (trace ("\n\npenalty = " ++ show penalty0 ++ "\n\n")
-                    optWithPenalty penalty0 m0 mhs) of
-            Left _   -> prev
-            Right r0 -> 
-                trace ("\n\ndeviance = " ++ show (LogLik.deviance $ BFGS.resultState r0)
-                      ++ "\n\ncoefs = " ++ show (Model.coefs $ LogLik.model $ BFGS.resultState r0)
-                      ++ "\n\n"
-                      )
-                go (Just (penalty0, r0))
-                   shrink
-                   (shrink*penalty0)
-                   (LogLik.model $ BFGS.resultState r0)
-                   mhs
+    go prev shrink penalty0 fdf x0 fdf0@(f0,df0,_) = let
+        report r =
+            trace ("\n\npenalty: " ++ (show $ penalty0)
+                   ++ "\nvalue: " ++ show (BFGS.resultValue r)
+                   ++ "\ngrad norm: " ++ show (norm2Vector $ BFGS.resultGrad r)
+                   ++ "\ngrad: " ++ show (elemsVector $ BFGS.resultGrad r)
+                   ++ "\nposition: " ++ show (elemsVector $ BFGS.resultPos r)
+                   ++ "\n\n")
+        in case optWithPenalty penalty0 fdf x0 fdf0 of
+            Left (w,r) -> report r prev
+            Right r -> report r $ let
+                next = go (Just (penalty0, r))
+                          shrink
+                          (shrink*penalty0)
+                          fdf
+                          (BFGS.resultPos r)
+                          ( BFGS.resultValue r
+                          , BFGS.resultGrad r
+                          , BFGS.resultState r
+                          )
+                in case prev of
+                       Nothing -> next
+                       Just (_,r0) -> let
+                           diff = abs (BFGS.resultValue r
+                                       - BFGS.resultValue r0)
+                           in if (diff < 1e-8 * abs (BFGS.resultValue r)
+                                      || diff < 1e-16)
+                                  then Just (penalty0, r)
+                                  else next
+                               
+
+whichMedianVector :: (Ord a, Storable a) => Vector a -> Int
+whichMedianVector x = let
+    n = dimVector x
+    xs = elemsVector x
+    in snd $ sort (zip xs [ 0.. ]) !! (n `div` 2)
 
 main :: IO ()        
 main = do
@@ -148,11 +191,54 @@ main = do
         tmhs = snd $ History.accum (t0,h0) tms
         mhs = [ (msg,h) | (_,msg,h) <- tmhs ]
         
-        beta0 = constantVector (Vars.dim v) 0
-        m0 = Model.fromVars v beta0 Model.NoLoops
-        penalty0 = 1e5
-        opt = optWithPenaltyShrink 0.5 penalty0 m0 mhs
+        smry = Summary.fromMessages v mhs
     
+        dyn_dim = ( Intervals.size sendIntervals
+                  + Intervals.size receiveIntervals )
+        send_dim = dimVector $ snd $ Map.findMin ss
+        recv_dim = dimVector $ snd $ Map.findMin rs        
+        stat_dim = send_dim * recv_dim
+        stat_sums = matrixViewVector
+                        (send_dim,recv_dim)
+                        (dropVector dyn_dim $ Summary.varsSum smry)
+        baseline = [ ( dyn_dim
+                     + i
+                     + send_dim * whichMedianVector r
+                     )
+                   | (i,r) <- zip [ 0..] (rowsMatrix stat_sums)
+                   ]
+        na = [ i | (i,c) <- assocsVector $ Summary.varsSum smry, c == 0 ]
+        fixed = nub $ baseline ++ na
+        notfixed = [ 0..Vars.dim v - 1 ] \\ fixed
+        
+        beta0 = replaceVector (constantVector (Vars.dim v) 0)
+                              [ (i,-10000) | i <- na ]
+                            
+        xdim = length notfixed
+        x0 = constantVector xdim (0::Double)
+        fdf x = let
+            beta = replaceVector beta0 $ zip notfixed (elemsVector x)
+            m = Model.fromVars v beta Model.NoLoops
+            ll = LogLik.fromMessages m mhs
+            (val,grad) = LogLik.valueGrad ll
+            gradx = listVector xdim [ atVector grad i | i <- notfixed ]
+            scale = 1 -- 0.5 * (fromIntegral $ LogLik.residDf ll)
+            in ( -(val/scale)
+               , scaleVector (-1/scale) gradx
+               , ll
+               )
+        
+        penalty0 = 1
+        opt = optWithPenaltyShrink 0.1 penalty0 fdf x0 (fdf x0)
+        
+    putStrLn $ "Observed Vars Sum: "
+             ++ show (elemsVector $ Summary.varsSum smry)
+             
+    -- putStrLn $ "Observed Counts: "
+    --         ++ show (Summary.counts smry)
+    
+    putStrLn ""
+
     case opt of
         Nothing ->
             putStrLn $ "Minimization algorithm failed to converge: "
@@ -167,5 +253,5 @@ main = do
                 putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)
                 
                 putStrLn $ "coefs: " ++ show (elemsVector $ BFGS.resultPos r)
-    
+
     disconnect conn
