@@ -2,6 +2,7 @@
 module Main
     where
 
+import Debug.Trace( trace )
 import Data.List( foldl' )
 import qualified Data.Map as Map
 import Database.HDBC
@@ -11,6 +12,7 @@ import Numeric.LinearAlgebra
        
         
 import Enron
+import History( History )
 import Intervals( Intervals )
 import LogLik( LogLik )
 import Model( Model )
@@ -81,12 +83,64 @@ getLogLik conn m = do
         mhs = [ (msg,h) | (_,msg,h) <- tmhs ]
     return $! LogLik.fromMessages m mhs
 
+optWithPenalty :: Double
+               -> Model
+               -> [(Message, History)]
+               -> Either (BFGS.Warning, BFGS.Result LogLik)
+                         (BFGS.Result LogLik)
+optWithPenalty penalty m0 mhs = let
+    beta0 = Model.coefs m0
+    loops = if Model.hasLoops m0 then Model.Loops else Model.NoLoops
+    nll beta = let m = Model.fromVars (Model.vars m0) beta loops
+                   ll = LogLik.fromMessages m mhs
+                   (f,g) = LogLik.valueGrad ll
+                   df = fromIntegral $ LogLik.residDf ll
+               in ( -2*f/df + (penalty/df) * (beta `dotVector` beta)
+                  , addVectorWithScales (-2/df) g (2*penalty/df) beta
+                  , ll
+                  )
+    
+    opt = BFGS.minimize BFGS.defaultControl{
+                                BFGS.linesearchControl =
+                                      LineSearch.defaultControl{
+                                            LineSearch.verbose = True
+                                          , LineSearch.valueTol = 0.01
+                                          , LineSearch.derivTol = 0.1
+                                      }
+                                , BFGS.iterMax = 10000
+                                , BFGS.gradTol = 1e-5
+                                , BFGS.verbose = True }
+                          nll beta0 (nll beta0)
+    
+    in opt
+
+optWithPenaltyShrink :: Double
+                     -> Double
+                     -> Model
+                     -> [(Message, History)]
+                     -> Maybe (Double, BFGS.Result LogLik)
+optWithPenaltyShrink = go Nothing
+  where
+    go prev shrink penalty0 m0 mhs =
+        case (trace ("\n\npenalty = " ++ show penalty0 ++ "\n\n")
+                    optWithPenalty penalty0 m0 mhs) of
+            Left _   -> prev
+            Right r0 -> 
+                trace ("\n\ndeviance = " ++ show (LogLik.deviance $ BFGS.resultState r0)
+                      ++ "\n\ncoefs = " ++ show (Model.coefs $ LogLik.model $ BFGS.resultState r0)
+                      ++ "\n\n"
+                      )
+                go (Just (penalty0, r0))
+                   shrink
+                   (shrink*penalty0)
+                   (LogLik.model $ BFGS.resultState r0)
+                   mhs
 
 main :: IO ()        
 main = do
     conn <- connectSqlite3 "enron.db"
-    ss <- (Map.fromList . map (fromEmployee False)) `fmap` fetchEmployeeList conn
-    rs <- ss `seq` (Map.fromList . map (fromEmployee True)) `fmap` fetchEmployeeList conn    
+    ss <- (Map.fromList . map (fromEmployee True)) `fmap` fetchEmployeeList conn
+    rs <- ss `seq` (Map.fromList . map (fromEmployee False)) `fmap` fetchEmployeeList conn    
     tms <- rs `seq` (map fromEmail `fmap` fetchEmailList conn)
     let v  = Vars.fromActors ss rs sendIntervals receiveIntervals
         t0 = (fst . head) tms
@@ -96,46 +150,22 @@ main = do
         
         beta0 = constantVector (Vars.dim v) 0
         m0 = Model.fromVars v beta0 Model.NoLoops
-        
-        penalty = 1e-4
-        
-        nll beta = let m = Model.fromVars v beta Model.NoLoops
-                       ll = LogLik.fromMessages m mhs
-                       (f,g) = LogLik.valueGrad ll
-                       df = fromIntegral $ LogLik.residDf ll
-                   in ( -f + 0.5 * penalty * (beta `dotVector` beta)
-                      , addVectorWithScales (-1) g penalty beta
-                      , ll
-                      )
-    
-        opt = BFGS.minimize BFGS.defaultControl{
-                                  BFGS.linesearchControl =
-                                      LineSearch.defaultControl{
-                                          LineSearch.verbose = True
-                                      }
-                                , BFGS.gradTol = 1e-5
-                                , BFGS.verbose = True }
-                          nll beta0 (nll beta0)
+        penalty0 = 1e5
+        opt = optWithPenaltyShrink 0.5 penalty0 m0 mhs
     
     case opt of
-        Left (w,r) -> do
+        Nothing ->
             putStrLn $ "Minimization algorithm failed to converge: "
-                     ++ show w
-            putStrLn $ "Gradient norm: " ++ show (norm2Vector $ BFGS.resultGrad r)
-            let ll = BFGS.resultState r
-            putStrLn $ "Null Deviance: " ++ show (LogLik.nullDeviance ll)
-            putStrLn $ "Null Df: " ++ show (LogLik.nullDf ll)    
 
-            putStrLn $ "Deviance: " ++ show (LogLik.deviance ll)
-            putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)    
-
-        Right r -> let
+        Just (penalty,r) -> let
             ll = BFGS.resultState r
             in do
                 putStrLn $ "Null Deviance: " ++ show (LogLik.nullDeviance ll)
                 putStrLn $ "Null Df: " ++ show (LogLik.nullDf ll)    
 
                 putStrLn $ "Deviance: " ++ show (LogLik.deviance ll)
-                putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)    
+                putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)
+                
+                putStrLn $ "coefs: " ++ show (elemsVector $ BFGS.resultPos r)
     
     disconnect conn
