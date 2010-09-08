@@ -311,4 +311,4 @@ insert msg ll =
 
 fromMessages :: Model -> [(Message, History)] -> LogLik
 fromMessages m mhs =
-    foldl' (flip LogLik.insert) (LogLik.empty m) mhs
+    foldl' (flip insert) (empty m) mhs
