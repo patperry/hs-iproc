@@ -830,7 +830,8 @@ prop_LogLik_doubleton_deviance (ModelWithMessageAndHistory2 m mh1 mh2) = let
 
 prop_LogLik_singleton_score_static (ModelWithMessage m msg) =
     LogLik.score (LogLik.fromMessages m [(msg,h)])
-        ~== (scaleVector (sqrt n) $
+        `verboseAEq`
+             (scaleVector (sqrt n) $
                  meanVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
                                          | r <- rs 
                                          ])
