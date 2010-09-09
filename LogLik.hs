@@ -19,7 +19,7 @@ module LogLik (
     ) where
 
 import Debug.Trace( trace )
-import Data.List( foldl' )
+import Data.List( foldl', mapAccumL )
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Numeric.LinearAlgebra
@@ -47,19 +47,33 @@ data SenderLogLik =
                  , receiveCount :: !(Map ReceiverId Int)
                  , observedVarChanges :: !(Map Int Double)
                  , valueSLL :: !Double
-                 , sumInvWeight :: !Double
-                 , sumInvWeightLogScale :: !Double
-                 , receiverWeights :: !(Map ReceiverId Double)
+                 , meanInvWeight :: !Double
+                 , meanInvWeightLogScale :: !Double
+                 , receiverWeightDiffs :: !(Map ReceiverId Double)
                  , expectedVarChanges :: !(Map Int Double)
                  }
     deriving (Show)
 
+showSLL :: SenderLogLik -> String
+showSLL sll =
+    (""
+    ++ "\nsendCount: " ++ show (sendCount sll)
+    ++ "\nreceiveCount: " ++ show (Map.assocs $ receiveCount sll)
+    ++ "\nobservedVarChanges: " ++ show (Map.assocs $ observedVarChanges sll)
+    ++ "\nvalue: " ++ show (valueSLL sll)
+    ++ "\nmeanInvWeight: " ++ show (meanInvWeight sll)
+    ++ "\nmeanInvWeightLogScale: " ++ show (meanInvWeightLogScale sll)
+    ++ "\nreceiverWeightDiffs: " ++ show (Map.assocs $ receiverWeightDiffs sll)
+    ++ "\nexpectedVarChanges" ++ show (Map.assocs $ expectedVarChanges sll)
+    )
+
 observedVarsSLL :: SenderLogLik -> Vector Double
 observedVarsSLL sll = let
-    rws = [ (r, fromIntegral w) | (r,w) <- Map.assocs rc ]
+    rws = [ (r, fromIntegral w / n) | (r,w) <- Map.assocs rc ]
     in accumVector (+) (Vars.weightReceiverBy rws v h0 s) (Map.assocs ovc)
   where
     m = senderModel sll
+    n = fromIntegral $ sendCount sll
     v = Model.vars m
     s = sender sll
     rc = receiveCount sll
@@ -86,8 +100,8 @@ expectedReceiverCountsSLL sll =
   where
     m = senderModel sll
     s = sender sll
-    scale = log (sumInvWeight sll) - sumInvWeightLogScale sll
-    rws = receiverWeights sll
+    scale = log (meanInvWeight sll) - meanInvWeightLogScale sll
+    rws = receiverWeightDiffs sll
     h0 = History.empty
 
 valueGradSLL :: SenderLogLik -> (Double, Vector Double)
@@ -97,37 +111,71 @@ valueGradSLL sll =
         f = valueSLL sll
         g = x `subVector` mu
     in if any isNaN (elemsVector g)
-            then error ("NaN Grad\n  obs: " ++ show (elemsVector x)
+            then trace ("NaN Grad\n  obs: " ++ show (elemsVector x)
                         ++ "\n  exp: " ++ show (elemsVector mu)
                         ++ "\n  ecounts: " ++ show (expectedReceiverCountsSLL sll)
-                        )
+                        ) (f,g)
             else (f, g)
 
 unionSLL :: SenderLogLik -> SenderLogLik -> SenderLogLik
-unionSLL (SenderLogLik m s sc1 rc1 ovc1 v1 siw1 logscale1 rw1 evc1)
-         (SenderLogLik _ _ sc2 rc2 ovc2 v2 siw2 logscale2 rw2 evc2) = let
-    (siw, logscale) = if logscale1 <= logscale2
-                          then ( siw1 + siw2 * exp (logscale1 - logscale2)
-                               , logscale1 )
-                          else ( siw1 * exp (logscale2 - logscale1) + siw2 
-                               , logscale2 )
-    in SenderLogLik m s
-                    ((+) sc1 sc2)
-                    (unionWith' (+) rc1 rc2)
-                    (unionWith' (+) ovc1 ovc2)
-                    ((+) v1 v2)
-                    siw logscale
-                    (unionWith' (+) rw1 rw2)
-                    (unionWith' (+) evc1 evc2)
+unionSLL sll1 sll2 =
+    if sendCount sll1 >= sendCount sll2
+        then add sll1 sll2
+        else add sll2 sll1
+  where
+    deleteLookup = Map.updateLookupWithKey (\_ _ -> Nothing)
+    
+    add (SenderLogLik m s sc1 rc1 ovc1 v1 miw1 logscale1 rw1 evc1)
+        (SenderLogLik _ _ sc2 rc2 ovc2 v2 miw2 logscale2 rw2 evc2) = let
+        
+        scale = fromIntegral sc2 / (fromIntegral sc1 + fromIntegral sc2)
+        scale' = 1 - scale
+        update old new = old + scale * (new - old)
+        
+
+        updateMap old new = let
+            with k v = v `seq` (k,v)
+            (diff,kvs1) =
+                mapAccumL (\acc (k,v) ->
+                              if Map.null acc
+                                  then (acc,with k $ scale' * v)
+                                  else case deleteLookup k acc of
+                                      (Nothing, acc') ->
+                                          (acc', with k $ scale' * v)
+                                      (Just v', acc') ->
+                                          (acc', with k $ update v v'))
+                          new
+                          (Map.assocs old)
+            kvs2 =[ with k (scale * v) | (k,v) <- Map.assocs diff ]
+            
+            in Map.fromList $ kvs1 ++ kvs2
+        
+        (miw, logscale) =
+            if logscale1 <= logscale2
+                  then ( update miw1 (miw2 * exp (logscale1 - logscale2))
+                       , logscale1 )
+                  else ( update (miw1 * exp (logscale2 - logscale1)) miw2
+                       , logscale2 )
+
+        in SenderLogLik m s
+                        ((+) sc1 sc2)
+                        (unionWith' (+) rc1 rc2)
+                        (updateMap ovc1 ovc2)
+                        (update v1 v2)
+                        miw logscale
+                        (updateMap rw1 rw2)
+                        (updateMap evc1 evc2)
 
 
 
 singletonSLL :: Model -> SenderId -> ([ReceiverId], History) -> SenderLogLik
 singletonSLL m s (rs, h) = let
-    sc = length rs
+    sc  = length rs
+    sc' = fromIntegral sc
     rc = Map.fromList $ zip rs (repeat 1)
-    ovc = foldl' (flip $ uncurry $ Map.insertWith' (+)) Map.empty $
-              concatMap (Vars.dyadChanges vars h s) rs
+    ovc = foldl' (flip $ \(i,dx) -> Map.insertWith' (+) i (dx / sc'))
+                 Map.empty
+                 (concatMap (Vars.dyadChanges vars h s) rs)
 
     -- active receiver set and difference in log-weights
     (active, dlws) = unzip [ (r,dlw)
@@ -172,25 +220,22 @@ singletonSLL m s (rs, h) = let
     log_sum_w = log_sum_w' + logscale
     lps = [ min 0 (lw' - log_sum_w') | lw' <- lws' ]
     
-    v = foldl' (+) 0 [ findWithDefault (Model.logProb m h0 s r - log_sum_w)
-                                       r
-                                       (zip active lps)
-                     | r <- rs
-                     ]
+    v = mean [ findWithDefault (Model.logProb m h0 s r - log_sum_w)
+                               r
+                               (zip active lps)
+             | r <- rs
+             ]
 
     ps = map exp lps
-    siw = fromIntegral sc
-    siwscale = logscale + log_sum_w'
+    miw = 1
+    miwscale = logscale + log_sum_w'
     dps = [ p - exp (lp0 - log_sum_w) | (p,lp0) <- zip ps lp0s ]
-    rw = Map.fromList $
-             [ (r, fromIntegral sc * dp) | (r,dp) <- zip active dps ]
+    rw = Map.fromList $ zip active dps
     evc = Map.fromList $
-               Vars.weightReceiverChangesBy
-               [ (r, fromIntegral sc * p) | (r,p) <- zip active ps ]
-               vars h s
+               Vars.weightReceiverChangesBy (zip active ps) vars h s
     in (if (not $ and [ p >= 0 && p <= 1 | p <- ps ]) 
-                || isInfinite siw
-                || isInfinite siwscale
+                || isInfinite miw
+                || isInfinite miwscale
             then trace (  ""
                           ++ "\ndlws: " ++ show dlws
                           ++ "\nlogscale: " ++ show logscale
@@ -208,12 +253,12 @@ singletonSLL m s (rs, h) = let
                           ++ "\nlps: " ++ show lps
                           ++ "\nv: " ++ show v
                           ++ "\nps: " ++ show ps
-                          ++ "\nsiw: " ++ show siw
-                          ++ "\nsiwscale: " ++ show siwscale
+                          ++ "\nmiw: " ++ show miw
+                          ++ "\nmiwscale: " ++ show miwscale
                           ++ "\ndps: " ++ show dps
                           )
                else id)
-        SenderLogLik m s sc rc ovc v siw siwscale rw evc
+        SenderLogLik m s sc rc ovc v miw miwscale rw evc
   where
     vars = Model.vars m
     beta = Model.coefs m
@@ -248,28 +293,38 @@ value = fst . valueGrad
 grad :: LogLik -> Vector Double
 grad = snd . valueGrad
 
-valueGrad :: LogLik -> (Double, Vector Double)
-valueGrad (LogLik m _ sllm) = let
-    (fs,gs) = unzip $ map valueGradSLL $ Map.elems sllm
-    -- f = stableSum 0 0 fs -- foldl' (+) 0 fs
-    f = stableMean 0 0 fs
-    g = meanVector (Vars.dim $ Model.vars m) gs -- sumVector (Vars.dim $ Model.vars m) gs
-    in g `seq` f `seq` (f, g)
+mean :: (Fractional a) => [a] -> a
+mean = go 0 0
   where
-    stableSum acc err []     = acc + err
-    stableSum acc err (x:xs) = let
-        x'   = err + x
-        acc' = acc + x'
-        diff = acc - acc'
-        err' = diff + x
-        in acc' `seq` err' `seq` stableSum acc' err' xs
-
-    stableMean n xbar [] = xbar
-    stableMean n xbar (x:xs) = let
+    go n xbar [] = xbar
+    go n xbar (x:xs) = let
         diff = x - xbar
         n' = n + 1
         xbar' = diff/n' + xbar
-        in n' `seq` xbar' `seq` stableMean n' xbar' xs
+        in n' `seq` xbar' `seq` go n' xbar' xs
+
+weightedMean :: (Fractional a) => [(a,a)] -> a
+weightedMean = go 0 0
+  where
+    go wtot xbar []          = xbar
+    go wtot xbar ((w,x):wxs) = 
+        if w == 0 then go wtot xbar wxs
+                  else let
+                      diff = x - xbar
+                      wtot' = wtot + w
+                      xbar' = xbar + (w/wtot')*diff
+                      in wtot' `seq` xbar' `seq` go wtot' xbar' wxs
+
+valueGrad :: LogLik -> (Double, Vector Double)
+valueGrad (LogLik m _ sllm) = let
+    (ws,fs,gs) = unzip3 [ let w = fromIntegral $ sendCount sll
+                              (f,g) = valueGradSLL sll
+                          in (w,f,g)
+                        | sll <- Map.elems sllm
+                        ]
+    f = weightedMean $ zip ws fs
+    g = weightedMeanVector (Vars.dim $ Model.vars m) $ zip ws gs
+    in (f, g)
 
 deviance :: LogLik -> Double
 deviance = fst . devianceScore
@@ -282,7 +337,7 @@ devianceScore ll = let
     (f, g) = valueGrad ll
     scount = fromIntegral $ Map.size $ senderLogLik ll
     n = fromIntegral $ count ll
-    in (-2 * f * scount, scaleVector (scount / sqrt n) g)
+    in (-2 * n * f, scaleVector (sqrt n) g)
 
 nullDeviance :: LogLik -> Double
 nullDeviance (LogLik m _ sllm) =
