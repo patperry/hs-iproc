@@ -37,6 +37,7 @@ module LineSearch (
     ) where
 
 import Prelude hiding ( init )
+import Data.Maybe( fromJust )
 import Debug.Trace( trace )
 
 
@@ -287,8 +288,7 @@ initState c (f0,d0) step0
         let
             gtest = d0 * valueTol c
             ftest = f0 + step0 * gtest
-            -- use auxiliary function to start with (psi, p.290)
-            lower = Eval { position = 0, value = f0, deriv = d0 - gtest }
+            lower = Eval { position = 0, value = f0, deriv = d0 }
             upper = lower
             int = Interval 0 (step0 + extrapIntUpper c * step0)
         in
@@ -359,26 +359,39 @@ step test ls
 
 
 update :: Eval -> State -> (Double, State)
-update test ls = let
+update test0 ls0 = let
+    -- Use auxiliary function to start with (psi, p.290)
     -- If the auxiliary function is nonpositive and the derivative of the
-    -- original function is positive, switch to  the original function (p.298)
-    aux' = auxFun ls && (value test > ftest || deriv test < 0)
-    test' = if aux' then modify test else test
-    ls'   = if auxFun ls && not aux'
-                then ls{ auxFun = False
-                       , lowerEval = restore (lowerEval ls)
-                       , upperEval = restore (upperEval ls)
-                       }
-                else ls
-    in maybeBisect $ unsafeUpdate test' ls'
+    -- original function is positive, switch to the original function (p.298)
+    aux = auxFun ls0 && (not $ value test0 <= ftest && deriv test0 > 0)
+
+    (test,ls) = if aux then ( modify test0
+                            , ls0{ lowerEval = modify (lowerEval ls0)
+                                 , upperEval = modify (upperEval ls0)
+                                 }
+                            )
+                       else ( test0
+                            , ls0{ auxFun = False }
+                            )
+
+    (t',ls1)  = unsafeUpdate test ls
+    ls1' = if aux then ls1{ lowerEval = restore (lowerEval ls1)
+                          , upperEval = restore (upperEval ls1)
+                          }
+                  else ls1
+
+    in maybeBisect $ (t',ls1')
   where
-    ftest = valueTest ls
-    gtest = derivTest ls
+    ftest = valueTest ls0
+    gtest = derivTest ls0
     modify e = e{ value = value e - position e * gtest
                 , deriv = deriv e - gtest }
-    restore e = e{ value = value e + position e * gtest
-                 , deriv = deriv e + gtest }
-    
+    restore e = fromJust $ lookup (position e)
+                                  [ (position test0, test0)
+                                  , (position (lowerEval ls0), lowerEval ls0)
+                                  , (position (upperEval ls0), upperEval ls0)
+                                  ]
+               
 
 -- | If the length of the interval doesn't decrease by delta after two
 -- iterations, then perform bisection instead (pp.292-293).
