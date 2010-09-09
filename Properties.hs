@@ -785,104 +785,96 @@ prop_Model_covVars (ModelWithHistory m h) =
 
 
 tests_LogLik = testGroup "LogLik"
-    [ testProperty "value . singleton (static)" prop_LogLik_singleton_value_static
-    , testProperty "value . doubleton (static)" prop_LogLik_doubleton_value_static
-    , testProperty "value . singleton" prop_LogLik_singleton_value
-    , testProperty "value . doubleton" prop_LogLik_doubleton_value
-    , testProperty "grad . singleton (static)" prop_LogLik_singleton_grad_static
-    , testProperty "grad . singleton" prop_LogLik_singleton_grad
-    , testProperty "grad . doubleton (static)" prop_LogLik_doubleton_grad_static
-    , testProperty "grad . doubleton" prop_LogLik_doubleton_grad
+    [ testProperty "deviance . singleton (static)" prop_LogLik_singleton_deviance_static
+    , testProperty "deviance . doubleton (static)" prop_LogLik_doubleton_deviance_static
+    , testProperty "deviance . singleton" prop_LogLik_singleton_deviance
+    , testProperty "deviance . doubleton" prop_LogLik_doubleton_deviance
+    , testProperty "score . singleton (static)" prop_LogLik_singleton_score_static
+    , testProperty "score . singleton" prop_LogLik_singleton_score
+    , testProperty "score . doubleton (static)" prop_LogLik_doubleton_score_static
+    , testProperty "score . doubleton" prop_LogLik_doubleton_score
     ]
     
-prop_LogLik_singleton_value_static (ModelWithMessage m msg) = let
-    val  = LogLik.value $ LogLik.fromMessages m [(msg,h)]
-    val' = sum [ Model.logProb m h s r | r <- rs ]
-    in if abs val' > eps
-            then val `verboseAEq` val'
-            else abs val <= eps
+prop_LogLik_singleton_deviance_static (ModelWithMessage m msg) = let
+    val  = LogLik.deviance $ LogLik.fromMessages m [(msg,h)]
+    val' = sum [ -2 * Model.logProb m h s r | r <- rs ]
+    in val `verboseAEq` val'
   where
     h = History.empty
     s = messageFrom msg
     rs = messageTo msg
     eps = 1e-7
 
-prop_LogLik_doubleton_value_static (ModelWithMessage2 m msg1 msg2) = let
-    val1 = LogLik.value $ LogLik.fromMessages m [(msg1,h)]
-    val2 = LogLik.value $ LogLik.fromMessages m [(msg2,h)]
-    val = LogLik.value $ LogLik.fromMessages m [(msg1,h), (msg2,h)]
+prop_LogLik_doubleton_deviance_static (ModelWithMessage2 m msg1 msg2) = let
+    val1 = LogLik.deviance $ LogLik.fromMessages m [(msg1,h)]
+    val2 = LogLik.deviance $ LogLik.fromMessages m [(msg2,h)]
+    val = LogLik.deviance $ LogLik.fromMessages m [(msg1,h), (msg2,h)]
     in val ~== val1 + val2
   where
     h = History.empty
 
-prop_LogLik_singleton_value (ModelWithMessageAndHistory m (msg,h)) = let
-    val  = LogLik.value $ LogLik.fromMessages m [(msg,h)]
-    val' = sum [ Model.logProb m h s r | r <- rs ]
-    in if abs val' > eps
-            then val `verboseAEq` val'
-            else abs val <= eps
+prop_LogLik_singleton_deviance (ModelWithMessageAndHistory m (msg,h)) = let
+    val  = LogLik.deviance $ LogLik.fromMessages m [(msg,h)]
+    val' = sum [ -2 * Model.logProb m h s r | r <- rs ]
+    in val `verboseAEq` val'
   where
     s = messageFrom msg
     rs = messageTo msg
     eps = 1e-7
 
-prop_LogLik_doubleton_value (ModelWithMessageAndHistory2 m mh1 mh2) = let
-    val1 = LogLik.value $ LogLik.fromMessages m [ mh1 ]
-    val2 = LogLik.value $ LogLik.fromMessages m [ mh2 ]
-    val = LogLik.value $ LogLik.fromMessages m [ mh1, mh2 ]
+prop_LogLik_doubleton_deviance (ModelWithMessageAndHistory2 m mh1 mh2) = let
+    val1 = LogLik.deviance $ LogLik.fromMessages m [ mh1 ]
+    val2 = LogLik.deviance $ LogLik.fromMessages m [ mh2 ]
+    val = LogLik.deviance $ LogLik.fromMessages m [ mh1, mh2 ]
     in val ~== val1 + val2
 
-prop_LogLik_singleton_grad_static (ModelWithMessage m msg) =
-    LogLik.grad (LogLik.fromMessages m [(msg,h)])
-        ~== sumVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
-                                   | r <- rs 
-                                   ]
+prop_LogLik_singleton_score_static (ModelWithMessage m msg) =
+    LogLik.score (LogLik.fromMessages m [(msg,h)])
+        ~== (scaleVector (sqrt n) $
+                 meanVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
+                                         | r <- rs 
+                                         ])
   where
     h = History.empty
     s = messageFrom msg
     rs = messageTo msg
+    n = fromIntegral $ length rs
     v = Model.vars m
     mu = Model.meanVars m h s
 
-prop_LogLik_doubleton_grad_static (ModelWithMessage2 m msg1 msg2) = let
-    grad1 = LogLik.grad $ LogLik.fromMessages m [(msg1,h)]
-    grad2 = LogLik.grad $ LogLik.fromMessages m [(msg2,h)]
-    grad = LogLik.grad $ LogLik.fromMessages m [(msg1,h), (msg2,h)]
-    in grad ~== grad1 `addVector` grad2
+prop_LogLik_doubleton_score_static (ModelWithMessage2 m msg1 msg2) = let
+    score1 = LogLik.score $ LogLik.fromMessages m [(msg1,h)]
+    score2 = LogLik.score $ LogLik.fromMessages m [(msg2,h)]
+    score = LogLik.score $ LogLik.fromMessages m [(msg1,h), (msg2,h)]
+    in score ~== addVectorWithScales (sqrt (n1/n)) score1 (sqrt (n2/n)) score2
   where
+    n1 = fromIntegral $ length $ messageTo msg1
+    n2 = fromIntegral $ length $ messageTo msg2
+    n = n1 + n2
     h = History.empty
 
-prop_LogLik_singleton_grad (ModelWithMessageAndHistory m (msg,h)) =
-    LogLik.grad (LogLik.fromMessages m [(msg,h)])
-        ~== sumVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
-                                   | r <- rs 
-                                   ]
+prop_LogLik_singleton_score (ModelWithMessageAndHistory m (msg,h)) =
+    LogLik.score (LogLik.fromMessages m [(msg,h)])
+        ~== (scaleVector (sqrt n) $
+                 meanVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
+                                         | r <- rs 
+                                         ])
   where
     s = messageFrom msg
     rs = messageTo msg
+    n = fromIntegral $ length rs
     v = Model.vars m
     mu = Model.meanVars m h s
 
-{-
-prop_LogLik_doubleton_grad =
-    forAll (resize 2 $ arbitrary) $ \(ModelWithMessageAndHistory2 m mh1 mh2) -> let
-        ll1 = LogLik.fromMessages m [ mh1 ]
-        ll2 = LogLik.fromMessages m [ mh2 ]
-        ll  = LogLik.fromMessages m [ mh1, mh2 ]
-        grad1 = LogLik.grad ll1
-        grad2 = LogLik.grad ll2
-        grad = LogLik.grad ll
-        in if grad ~== (grad1 `addVector` grad2) then True
-                else trace ("\nll1: " ++ show ll1
-                            ++ "\nll2: " ++ show ll2
-                            ++ "\nll: " ++ show ll) False
--}
-
-prop_LogLik_doubleton_grad (ModelWithMessageAndHistory2 m mh1 mh2) = let
-    grad1 = LogLik.grad $ LogLik.fromMessages m [ mh1 ]
-    grad2 = LogLik.grad $ LogLik.fromMessages m [ mh2 ]
-    grad = LogLik.grad $ LogLik.fromMessages m [ mh1, mh2 ]
-    in grad `verboseAEq` (grad1 `addVector` grad2)
+prop_LogLik_doubleton_score (ModelWithMessageAndHistory2 m mh1 mh2) = let
+    score1 = LogLik.score $ LogLik.fromMessages m [ mh1 ]
+    score2 = LogLik.score $ LogLik.fromMessages m [ mh2 ]
+    score = LogLik.score $ LogLik.fromMessages m [ mh1, mh2 ]
+    in score ~== addVectorWithScales (sqrt (n1/n)) score1 (sqrt (n2/n)) score2
+  where
+    n1 = fromIntegral $ length $ messageTo $ fst mh1
+    n2 = fromIntegral $ length $ messageTo $ fst mh2
+    n = n1 + n2
 
 
 main :: IO ()
