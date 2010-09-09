@@ -251,8 +251,9 @@ grad = snd . valueGrad
 valueGrad :: LogLik -> (Double, Vector Double)
 valueGrad (LogLik m _ sllm) = let
     (fs,gs) = unzip $ map valueGradSLL $ Map.elems sllm
-    f = stableSum 0 0 fs -- foldl' (+) 0 fs
-    g = sumVector (Vars.dim $ Model.vars m) gs
+    -- f = stableSum 0 0 fs -- foldl' (+) 0 fs
+    f = stableMean 0 0 fs
+    g = meanVector (Vars.dim $ Model.vars m) gs -- sumVector (Vars.dim $ Model.vars m) gs
     in g `seq` f `seq` (f, g)
   where
     stableSum acc err []     = acc + err
@@ -263,6 +264,13 @@ valueGrad (LogLik m _ sllm) = let
         err' = diff + x
         in acc' `seq` err' `seq` stableSum acc' err' xs
 
+    stableMean n xbar [] = xbar
+    stableMean n xbar (x:xs) = let
+        diff = x - xbar
+        n' = n + 1
+        xbar' = diff/n' + xbar
+        in n' `seq` xbar' `seq` stableMean n' xbar' xs
+
 deviance :: LogLik -> Double
 deviance = fst . devianceScore
 
@@ -272,8 +280,9 @@ score = snd . devianceScore
 devianceScore :: LogLik -> (Double, Vector Double)
 devianceScore ll = let
     (f, g) = valueGrad ll
+    scount = fromIntegral $ Map.size $ senderLogLik ll
     n = fromIntegral $ count ll
-    in (-2 * f, scaleVector (1 / sqrt n) g)
+    in (-2 * f * scount, scaleVector (scount / sqrt n) g)
 
 nullDeviance :: LogLik -> Double
 nullDeviance (LogLik m _ sllm) =
