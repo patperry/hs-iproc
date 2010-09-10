@@ -7,6 +7,7 @@ module Summary (
     vars,
     varsSum,
     counts,
+    count,
     ) where
 
 import Data.List( foldl' )
