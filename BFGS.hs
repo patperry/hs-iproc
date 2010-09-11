@@ -57,16 +57,14 @@ data Control =
                                     --   function values before declaring
                                     --   convergence
                                     --   (default 2.220446049250313e-16)
-                                    
-{-                                    
         , gradTol :: !Double        -- ^ maximum Euclidean norm of the 
                                     --   gradient before declaring
                                     --   convergence; the minimization
                                     --   algorithm stops when
                                     --   @||g|| <= gradTol * max(1, ||x||)@,
                                     --   where @g@ is the gradient and
--}
                                     --   @x@ is the position
+                                    --   (default @1e-5@)
         , iterMax :: !Int           -- ^ maximum number of iterations
                                     --   (default @100@)
         , verbose :: !Bool          -- ^ indicates whether to print status
@@ -81,6 +79,7 @@ defaultControl =
     Control { linesearchControl = LineSearch.defaultControl
             , relTol = 1.490116119384766e-08
             , absTol = 2.220446049250313e-16
+            , gradTol = 1e-5
             , iterMax = 100
             , verbose = False
             }
@@ -91,6 +90,8 @@ checkControl c
         error $ "invalid relTol: `" ++ show (relTol c) ++ "'"
     | not (absTol c >= 0) =
         error $ "invalid absTol: `" ++ show (absTol c) ++ "'"
+    | not (gradTol c >= 0) =
+        error $ "invalid gradTol: `" ++ show (gradTol c) ++ "'"
     | not (iterMax c > 0) =
         error $ "invalid iterMax: `" ++ show (iterMax c) ++ "'"
     | otherwise = id
@@ -213,12 +214,10 @@ update e bfgs
         Converged
     | valDiff < absTol (control bfgs) =
         Converged
-{-        
     | (norm2Vector (gradient e)
            < gradTol (control bfgs) * 
                  max 1 (norm2Vector (position e))) =
         Converged
--}
     | iter bfgs >= iterMax (control bfgs) =
         Stuck AtIterMax
     | otherwise =
