@@ -206,7 +206,7 @@ rosenbrock0 = listVector 2 [ -1.2, 1.0 ]
 test_rosenbrock = testGroup "Rosenbrock"
     [ testCase "value" $
           case result of
-              Right r -> trunc2 (BFGS.resultValue r) @?= 3.9e-25
+              Right r -> trunc2 (BFGS.resultValue r) @?= 7.7e-15
               Left r -> assertFailure $ "Warning: " ++ show r
     , testCase "position" $ 
           case result of
