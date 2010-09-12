@@ -7,6 +7,7 @@ module ModelBase (
 
     vars,
     coefs,
+    loops,
     hasLoops,
     senders,
     receivers,
@@ -48,6 +49,9 @@ data Model =
           , hasLoops :: !Bool
           }
     deriving (Show)
+
+loops :: Model -> Loops
+loops m = if hasLoops m then Loops else NoLoops
 
 fromVars :: Vars -> Vector Double -> Loops -> Model
 fromVars v c l

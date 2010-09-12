@@ -6,6 +6,7 @@ module Model (
 
     vars,
     coefs,
+    loops,
     hasLoops,
     senders,
     receivers,
@@ -63,6 +64,9 @@ fromBase m = let
 fromVars :: Vars -> Vector Double -> Loops -> Model
 fromVars v c l =
     fromBase $ Base.fromVars v c l
+
+loops :: Model -> Loops
+loops = Base.loops . base
 
 addStep :: Vector Double -> Model -> Model
 addStep step m0 = let
