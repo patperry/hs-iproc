@@ -82,7 +82,15 @@ main = do
 
         Just (penalty,r) -> let
             ll = Fit.resultState r
-            (Herm _ fish) = Fisher.fromMessages (LogLik.model ll) mhs
+            fish = Fisher.fromMessages (LogLik.model ll) mhs
+            (val,vec) = eigenHermMatrix fish
+            nzero = length $ [ e | e <- elemsVector val, abs e < 1e-6 ]
+            val' = dropVector nzero val
+            val_inv' = recipVector val'
+            vec' = dropColsMatrix nzero vec
+            fishinv = mulMatrixMatrix NoTrans vec'
+                                      Trans   (scaleColsMatrix val_inv' vec')
+            stderr = sqrtVector $ diagMatrix fishinv
             in do
                 putStrLn $ "Null Deviance: " ++ show (LogLik.nullDeviance ll)
                 putStrLn $ "Null Df: " ++ show (LogLik.nullDf ll)    
@@ -90,10 +98,13 @@ main = do
                 putStrLn $ "Deviance: " ++ show (LogLik.deviance ll)
                 putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)
                 
+                putStrLn $ "rank of Fisher matrix: "
+                         ++ show (Vars.dim v - nzero)
+                
                 putStrLn $ "coefs: "
                          ++ show (elemsVector $ Model.coefs $ LogLik.model ll)
-                
-                putStrLn $ "\nfisher: "
-                         ++ show (elemsMatrix fish)
+                         
+                putStrLn $ "stderr: "
+                         ++ show (elemsVector stderr)
 
     disconnect conn
