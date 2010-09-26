@@ -856,7 +856,7 @@ prop_LogLik_doubleton_score_static (ModelWithMessage2 m msg1 msg2) = let
 
 prop_LogLik_singleton_score (ModelWithMessageAndHistory m (msg,h)) =
     LogLik.score (LogLik.fromMessages m [(msg,h)])
-        ~== (scaleVector (sqrt n) $
+        `verboseAEq` (scaleVector (sqrt n) $
                  meanVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
                                          | r <- rs 
                                          ])
@@ -871,7 +871,7 @@ prop_LogLik_doubleton_score (ModelWithMessageAndHistory2 m mh1 mh2) = let
     score1 = LogLik.score $ LogLik.fromMessages m [ mh1 ]
     score2 = LogLik.score $ LogLik.fromMessages m [ mh2 ]
     score = LogLik.score $ LogLik.fromMessages m [ mh1, mh2 ]
-    in score ~== addVectorWithScales (sqrt (n1/n)) score1 (sqrt (n2/n)) score2
+    in score `verboseAEq` addVectorWithScales (sqrt (n1/n)) score1 (sqrt (n2/n)) score2
   where
     n1 = fromIntegral $ length $ messageTo $ fst mh1
     n2 = fromIntegral $ length $ messageTo $ fst mh2
