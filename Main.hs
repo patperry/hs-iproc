@@ -83,14 +83,9 @@ main = do
         Just (penalty,r) -> let
             ll = Fit.resultState r
             fish = Fisher.fromMessages (LogLik.model ll) mhs
-            (val,vec) = eigenHermMatrix fish
-            nzero = length $ [ e | e <- elemsVector val, abs e < 1e-6 ]
-            val' = dropVector nzero val
-            val_inv' = recipVector val'
-            vec' = dropColsMatrix nzero vec
-            fishinv = mulMatrixMatrix NoTrans vec'
-                                      Trans   (scaleColsMatrix val_inv' vec')
-            stderr = sqrtVector $ diagMatrix fishinv
+            tol = 1e-6
+            (fishinv,nzero) = Fisher.invWithTol tol fish
+            stderr = withHerm fishinv $ \_ a -> sqrtVector $ diagMatrix a
             in do
                 putStrLn $ "Null Deviance: " ++ show (LogLik.nullDeviance ll)
                 putStrLn $ "Null Df: " ++ show (LogLik.nullDf ll)    

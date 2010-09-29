@@ -1,5 +1,6 @@
-module Fisher (
-    fromMessages
+module Fisher
+    ( fromMessages
+    , invWithTol
     ) where
 
 import Numeric.LinearAlgebra
@@ -26,3 +27,14 @@ fromMessages m mhs0 = runHermMatrix $ do
         in do
             addToMatrixWithScales 1 f l f' f
             go f mhs
+
+invWithTol :: Double -> Herm Matrix Double -> (Herm Matrix Double, Int)
+invWithTol tol a@(Herm uplo _) = let
+    (val,vec) = eigenHermMatrix a
+    nzero = length $ [ e | e <- elemsVector val, abs e < tol ]
+    val' = dropVector nzero val
+    val_inv' = recipVector val'
+    vec' = dropColsMatrix nzero vec
+    ainv = mulMatrixMatrix NoTrans vec'
+                           Trans   (scaleColsMatrix val_inv' vec')
+    in (Herm uplo ainv, nzero)
