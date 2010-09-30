@@ -44,9 +44,8 @@ actorFromEmployee (Employee eid _ _ _ gen sen dep) =
         l = if dep == Legal then 1 else 0
         t = if dep == Trading then 1 else 0
         o = if dep == Other then 1 else 0
-        xs = [ f*j*l, m*j*l, f*s*l, m*s*l
-             , f*j*t, m*j*t, f*s*t, m*s*t
-             , f*j*o, m*j*o, f*s*o, m*s*o
+        xs = [ f*s*l, m*s*l, f*s*t, m*s*t, f*s*o, m*s*o
+             , f*j*l, m*j*l, f*j*t, m*j*t, f*j*o, m*j*o
              ]
         p = length xs
     in (eid, listVector p xs)
