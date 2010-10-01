@@ -1,9 +1,11 @@
+{-# LANGUAGE ForeignFunctionInterface #-}
 module Bootstrap (
     fromSends
     ) where
 
 import Control.Monad( replicateM )
-import Control.Monad.MC( MC, sampleSubsetWithWeights, unsafeInterleaveMC )
+import Control.Monad.MC( MC, sampleWithWeights, sampleSubsetWithWeights,
+    unsafeInterleaveMC )
 import Data.List( nub )
 import Debug.Trace
 
