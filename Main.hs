@@ -5,9 +5,8 @@ module Main
 import qualified Data.Map as Map
 import Database.HDBC
 import Database.HDBC.Sqlite3
-        
 import Numeric.LinearAlgebra
-       
+import System.IO( stdout ) 
         
 import Enron
 import History( History )
@@ -17,6 +16,7 @@ import Model( Model )
 import Types
 
 import qualified Fit as Fit
+import qualified FitSummary as FitSummary
 import qualified Intervals as Intervals
 import qualified Fisher as Fisher
 import qualified History as History
@@ -82,23 +82,8 @@ main = do
         Just (penalty,r) -> let
             ll = Fit.resultState r
             fish = Fisher.fromMessages (LogLik.model ll) mhs
-            tol = 1e-6
-            (fishinv,nzero) = Fisher.invWithTol tol fish
-            stderr = withHerm fishinv $ \_ a -> sqrtVector $ diagMatrix a
             in do
-                putStrLn $ "Null Deviance: " ++ show (LogLik.nullDeviance ll)
-                putStrLn $ "Null Df: " ++ show (LogLik.nullDf ll)    
-
-                putStrLn $ "Deviance: " ++ show (LogLik.deviance ll)
-                putStrLn $ "Resid. Df: " ++ show (LogLik.residDf ll)
-                
-                putStrLn $ "rank of Fisher matrix: "
-                         ++ show (Vars.dim v - nzero)
-                
-                putStrLn $ "coefs: "
-                         ++ show (elemsVector $ Model.coefs $ LogLik.model ll)
-                         
-                putStrLn $ "stderr: "
-                         ++ show (elemsVector stderr)
+                FitSummary.hPutFitSummary stdout (penalty,r)
+                FitSummary.hPutCovSummary stdout fish
 
     disconnect conn

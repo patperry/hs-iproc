@@ -49,7 +49,7 @@ posixSecondsToUTCTime = id
 newtype Time = Time { unTime :: UTCTime }
     deriving (Eq, Show, Ord)
 newtype DiffTime = DiffTime { unDiffTime :: NominalDiffTime } 
-    deriving (Eq, Show, Num, Enum, Ord)
+    deriving (Eq, Show, Num, Enum, Ord, Integral, Real)
 
 posixSecondsToTime :: DiffTime -> Time
 posixSecondsToTime = Time . posixSecondsToUTCTime . unDiffTime
