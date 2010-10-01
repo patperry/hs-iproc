@@ -26,7 +26,7 @@ fromSends m = go 0
     go acc (((s,l),h):slhs) = let
         model_rps = Model.probs m h s
         sampleWithReplace = sampleWithWeights [ (p,r) | (r,p) <- model_rps ]
-        ntry = 10000
+        ntry = 100000
         in do
             mrs <- tryRejection sampleWithReplace l ntry
             case mrs of
