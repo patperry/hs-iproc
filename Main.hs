@@ -58,13 +58,18 @@ receiveIntervals = Intervals.fromList $
     map (fromIntegral . floor . (3600*) . (2^^)) $
         [ -6..14 ]
 
+maxRecipCount :: Int
+maxRecipCount = 10
+
 main :: IO ()        
 main = do
     conn <- connectSqlite3 "enron.db"
     ss <- (Map.fromList . map senderFromEmployee) `fmap` fetchEmployeeList conn
     rs <- ss `seq` (Map.fromList . map receiverFromEmployee) `fmap` fetchEmployeeList conn    
-    tms <- rs `seq` (map messageFromEmail `fmap` fetchEmailList conn)
-    let v  = Vars.fromActors ss rs sendIntervals receiveIntervals
+    tms0 <- rs `seq` (map messageFromEmail `fmap` fetchEmailList conn)
+    let tms = [ (t,msg) | (t,msg) <- tms0
+                        , length (messageTo msg) <= maxRecipCount ]
+        v  = Vars.fromActors ss rs sendIntervals receiveIntervals
         t0 = (fst . head) tms
         h0 = History.empty
         tmhs = snd $ History.accum (t0,h0) tms
