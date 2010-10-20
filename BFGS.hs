@@ -41,6 +41,8 @@ import LineSearch( SearchCont )
 import qualified LineSearch as LineSearch
 
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
 
 
 -- | Parameters for the minimization.
@@ -153,7 +155,7 @@ minimizeCont c x0 fdf0 = let
                           ++ " value: " ++ show (fst fdf0)
                           ++ " dec: "
                           ++ show (negate $ 
-                                   snd fdf0 `dotVector` searchDir bfgs0 / 2)
+                                   snd fdf0 `V.dot` searchDir bfgs0 / 2)
                           ) bfgs0
     x = searchPos bfgs
     
@@ -164,27 +166,27 @@ initState :: Control
           -> (Double, Vector Double)
           -> State
 initState c x0 (f0,g0)
-    | any isNaN $ elemsVector x0 =
+    | any isNaN $ V.elems x0 =
         error $ "component of initial position is NaN"
               ++ " (initial position is `" ++ show x0 ++ "')"        
     | isNaN f0 =
         error $ "initial value is NaN"
-    | any isNaN $ elemsVector g0 =
+    | any isNaN $ V.elems g0 =
         error $ "component of initial gradient is NaN"
               ++ " (initial gradient is `" ++ show g0 ++ "')"
-    | dimVector x0 /= dimVector g0 =
-        error $ "position dimension (`" ++ show (dimVector x0) ++ "')"
-              ++ " and gradient dimension (`" ++ show (dimVector g0) ++ "')"
+    | V.dim x0 /= V.dim g0 =
+        error $ "position dimension (`" ++ show (V.dim x0) ++ "')"
+              ++ " and gradient dimension (`" ++ show (V.dim g0) ++ "')"
               ++ " do not match"
     | otherwise = let
         prev = Eval { position = x0, value = f0, gradient = g0 }
         cur = prev
-        dir = negateVector g0
+        dir = V.negate g0
         ls0 = LineSearch.searchCont (linesearchControl c)
-                                    (f0, g0 `dotVector` dir) 1
+                                    (f0, g0 `V.dot` dir) 1
         (x,k) = case ls0 of
                     LineSearch.InProgress t k0 ->
-                            (addVectorWithScales 1 x0 t dir, k0)
+                            (V.addWithScale t dir x0, k0)
                     _ -> undefined
         in checkControl c $
                State { control = c
@@ -201,22 +203,22 @@ update :: Eval -> State -> MinimizeCont
 update e bfgs
     | isNaN (value e) =
         error $ "function value is NaN"
-    | any isNaN $ elemsVector (gradient e) =
+    | any isNaN $ V.elems (gradient e) =
         error $ "component of gradient is NaN"
               ++ " (gradient is `" ++ show (gradient e) ++ "')"
-    | dimVector (position e) /= dimVector (gradient e) =
+    | V.dim (position e) /= V.dim (gradient e) =
         error $ "position dimension (`"
-              ++ show (dimVector $ position e) ++ "')"
+              ++ show (V.dim $ position e) ++ "')"
               ++ " and gradient dimension (`"
-              ++ show (dimVector $ gradient e) ++ "')"
+              ++ show (V.dim $ gradient e) ++ "')"
               ++ " do not match"
     | valDiff < relTol (control bfgs) * abs (value e) =
         Converged
     | valDiff < absTol (control bfgs) =
         Converged
-    | (norm2Vector (gradient e)
+    | (V.norm2 (gradient e)
            < gradTol (control bfgs) * 
-                 max 1 (norm2Vector (position e))) =
+                 max 1 (V.norm2 (position e))) =
         Converged
     | iter bfgs >= iterMax (control bfgs) =
         Stuck AtIterMax
@@ -233,44 +235,43 @@ unsafeUpdate :: Eval -> State -> Either LineSearch.Warning State
 unsafeUpdate e bfgs = let
     dir = searchDir bfgs
     k = linesearch bfgs
-    in case k (value e, gradient e `dotVector` dir) of
+    in case k (value e, gradient e `V.dot` dir) of
            LineSearch.Converged -> Right $ step e bfgs
            LineSearch.Stuck w   -> Left w
            LineSearch.InProgress t k' -> let
-                x' = addVectorWithScales 1 (position (curEval bfgs))
-                                         t (searchDir bfgs)
-                in Right $ bfgs{ searchPos = x', linesearch = k' }
+               x' = V.addWithScale t (searchDir bfgs) (position (curEval bfgs))
+               in Right $ bfgs{ searchPos = x', linesearch = k' }
 
 step :: Eval -> State -> State
 step e bfgs = let
-    dx = position e `subVector` position (curEval bfgs)
-    dg = gradient e `subVector` gradient (curEval bfgs)
-    dx_dg = dx `dotVector` dg
-    dg_dg = dg `dotVector` dg
+    dx = position e `V.sub` position (curEval bfgs)
+    dg = gradient e `V.sub` gradient (curEval bfgs)
+    dx_dg = dx `V.dot` dg
+    dg_dg = dg `V.dot` dg
     hinv = case invHessian bfgs of
                Just hinv0 -> hinv0
                Nothing ->
-                   let p = dimVector (position e)
+                   let p = V.dim (position e)
                    in Herm Upper $
-                          replaceMatrix (constantMatrix (p,p) 0)
+                          M.update (M.constant (p,p) 0)
                                         [ ((i,i), dx_dg / dg_dg)
                                         | i <- [ 0..p-1 ]
                                         ]
-    hinv_dg = mulHermMatrixVector hinv dg
-    dg_hinv_dg = hinv_dg `dotVector` dg
-    hinv' = runHermMatrix $ do
-                mhinv <- withHerm hinv $ \u a -> Herm u `fmap` newCopyMatrix a
-                rank1UpdateToHermMatrix ((dg_hinv_dg/dx_dg+1)/dx_dg) dx mhinv
-                rank2UpdateToHermMatrix (-1/dx_dg) dx hinv_dg mhinv
+    hinv_dg = M.hermMulVector hinv dg
+    dg_hinv_dg = hinv_dg `V.dot` dg
+    hinv' = M.hermCreate $ do
+                mhinv <- case hinv of { Herm u a -> Herm u `fmap` M.newCopy a }
+                M.hermRank1UpdateM_ ((dg_hinv_dg/dx_dg+1)/dx_dg) dx mhinv
+                M.hermRank2UpdateM_ (-1/dx_dg) dx hinv_dg mhinv
                 return mhinv
-    dir' = mulHermMatrixVectorWithScale (-1) hinv' (gradient e)
+    dir' = M.hermMulVectorWithScale (-1) hinv' (gradient e)
     ls = LineSearch.searchCont (linesearchControl $ control bfgs)
-                               (value e, gradient e `dotVector` dir')
+                               (value e, gradient e `V.dot` dir')
                                1
     (t',k') = case ls of LineSearch.InProgress t0 k0 -> (t0,k0)
                          _ -> undefined
                        
-    x' = addVectorWithScales 1 (position e) t' dir'
+    x' = V.addWithScale t' dir' (position e) 
     bfgs' = bfgs{ iter = iter bfgs + 1
                 , prevEval = curEval bfgs
                 , curEval = e
@@ -284,8 +285,8 @@ step e bfgs = let
             else trace ("MINIMIZE iter: " ++ show (iter bfgs')
                         ++ " value: " ++ show (value e)
                         ++ " dec: "
-                        ++   show (-(gradient e `dotVector` searchDir bfgs')/2)
-                        ++ " step: " ++   show (norm2Vector dx)
+                        ++   show (-(gradient e `V.dot` searchDir bfgs')/2)
+                        ++ " step: " ++   show (V.norm2 dx)
                         ) bfgs'
 
 

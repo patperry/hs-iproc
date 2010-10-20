@@ -23,6 +23,8 @@ import Data.List( foldl', mapAccumL )
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
 
 import History( History )
 import Model( Model )
@@ -70,7 +72,7 @@ showSLL sll =
 observedVarsSLL :: SenderLogLik -> Vector Double
 observedVarsSLL sll = let
     rws = [ (r, fromIntegral w / n) | (r,w) <- Map.assocs rc ]
-    in accumVector (+) (Vars.weightReceiverBy rws v h0 s) (Map.assocs ovc)
+    in V.accum (+) (Vars.weightReceiverBy rws v h0 s) (Map.assocs ovc)
   where
     m = senderModel sll
     n = fromIntegral $ sendCount sll
@@ -83,7 +85,7 @@ observedVarsSLL sll = let
 expectedVarsSLL :: SenderLogLik -> Vector Double
 expectedVarsSLL sll = let
     rws = expectedReceiverCountsSLL sll
-    in accumVector (+) (Vars.weightReceiverBy rws v h0 s) (Map.assocs evc)
+    in V.accum (+) (Vars.weightReceiverBy rws v h0 s) (Map.assocs evc)
   where
     m = senderModel sll
     v = Model.vars m
@@ -109,10 +111,10 @@ valueGradSLL sll =
     let x = observedVarsSLL sll
         mu = expectedVarsSLL sll
         f = valueSLL sll
-        g = x `subVector` mu
-    in if any isNaN (elemsVector g)
-            then trace ("NaN Grad\n  obs: " ++ show (elemsVector x)
-                        ++ "\n  exp: " ++ show (elemsVector mu)
+        g = x `V.sub` mu
+    in if any isNaN (V.elems g)
+            then trace ("NaN Grad\n  obs: " ++ show (V.elems x)
+                        ++ "\n  exp: " ++ show (V.elems mu)
                         ++ "\n  ecounts: " ++ show (expectedReceiverCountsSLL sll)
                         ) (f,g)
             else (f, g)
@@ -323,7 +325,7 @@ valueGrad (LogLik m _ sllm) = let
                         | sll <- Map.elems sllm
                         ]
     f = weightedMean $ zip ws fs
-    g = weightedMeanVector (Vars.dim $ Model.vars m) $ zip ws gs
+    g = V.weightedMean (Vars.dim $ Model.vars m) $ zip ws gs
     in (f, g)
 
 deviance :: LogLik -> Double
@@ -337,7 +339,7 @@ devianceScore ll = let
     (f, g) = valueGrad ll
     scount = fromIntegral $ Map.size $ senderLogLik ll
     n = fromIntegral $ count ll
-    in (-2 * n * f, scaleVector (sqrt n) g)
+    in (-2 * n * f, V.scale (sqrt n) g)
 
 nullDeviance :: LogLik -> Double
 nullDeviance (LogLik m _ sllm) =

@@ -3,6 +3,8 @@ module Main
         
 import Data.Ratio( approxRational, (%) )
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
 import Test.Framework
 import Test.Framework.Providers.HUnit
 import Test.HUnit
@@ -192,16 +194,16 @@ tests_BFGS = testGroup "BFGS"
 
 rosenbrock :: Vector Double -> (Double, Vector Double, ())
 rosenbrock v = let
-    x = atVector v 0
-    y = atVector v 1
+    x = V.at v 0
+    y = V.at v 1
     f =     (1-x)^^2 + 100*(y - x^^2)^^2
     gx = -2*(1-x)    + 200*(y - x^^2) * (-2*x)
     gy =               200*(y - x^^2)
-    g = listVector 2 [gx, gy]
+    g = V.fromList 2 [gx, gy]
     in (f, g, ())
 
 rosenbrock0 :: Vector Double
-rosenbrock0 = listVector 2 [ -1.2, 1.0 ]
+rosenbrock0 = V.fromList 2 [ -1.2, 1.0 ]
 
 test_rosenbrock = testGroup "Rosenbrock"
     [ testCase "value" $
@@ -210,8 +212,8 @@ test_rosenbrock = testGroup "Rosenbrock"
               Left r -> assertFailure $ "Warning: " ++ show r
     , testCase "position" $ 
           case result of
-              Right r -> ( trunc2 (atVector (BFGS.resultPos r) 0)
-                         , trunc2 (atVector (BFGS.resultPos r) 1)
+              Right r -> ( trunc2 (V.at (BFGS.resultPos r) 0)
+                         , trunc2 (V.at (BFGS.resultPos r) 1)
                          ) @?= (1.0, 1.0)
               Left r -> assertFailure $ "Warning: " ++ show r                         
     ]

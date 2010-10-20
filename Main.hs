@@ -6,6 +6,9 @@ import qualified Data.Map as Map
 import Database.HDBC
 import Database.HDBC.Sqlite3
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
+
 import System.IO( stdout ) 
         
 import Enron
@@ -48,7 +51,7 @@ actorFromEmployee (Employee eid _ _ _ gen sen dep) =
              , m*l*j, m*l*s, m*t*j, m*t*s, m*o*j, m*o*s
              ]
         p = length xs
-    in (eid, listVector p xs)
+    in (eid, V.fromList p xs)
 
 sendIntervals :: Intervals
 sendIntervals = Intervals.fromList []
@@ -75,7 +78,7 @@ main = do
         tmhs = snd $ History.accum (t0,h0) tms
         mhs = [ (msg,h) | (_,msg,h) <- tmhs ]
         
-        beta0 = constantVector (Vars.dim v) 0
+        beta0 = V.constant (Vars.dim v) 0
         fixed = []
         m0 = Model.fromVars v beta0 Model.NoLoops                          
         fit = Fit.fromMessagesWithFixed fixed m0 mhs

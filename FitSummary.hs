@@ -7,6 +7,9 @@ import Control.Monad
 import System.IO
 
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
+
 
 import Fit( Result )
 import LogLik( LogLik )
@@ -45,16 +48,14 @@ hPutFitSummary h (penalty,r) = let
 hPutCovSummary :: Handle -> Herm Matrix Double -> IO ()
 hPutCovSummary h fish = let
     tol = 1e-6
-    (fishinv,nzero) = Fisher.invWithTol tol fish
-    (se, n) = withHerm fishinv $ \_ a -> 
-                      ( sqrtVector $ diagMatrix a
-                      , fst $ dimMatrix a )
+    ((Herm _ fishinv), nzero) = Fisher.invWithTol tol fish
+    (se, n) = ( V.sqrt $ M.diag fishinv
+              , fst $ M.dim fishinv )
 
     in do
         hPutScalar h "df.effective" $ n - nzero
         hPutVector h "coefs.se" se
-        withHerm fishinv $ \_ a ->
-            hPutMatrix h "coefs.cov" a
+        hPutMatrix h "coefs.cov" fishinv
 
 
 hPutScalar :: (Show a) => Handle -> String -> a -> IO ()
@@ -64,14 +65,14 @@ hPutScalar h name a = do
 hPutMatrix :: (Show a, Storable a) => Handle -> String -> Matrix a -> IO ()
 hPutMatrix h name a = do
     hPutStr h $ name ++ " <- matrix("
-    hPutRawList h $ elemsMatrix a
+    hPutRawList h $ M.elems a
     hPutStr h $ ", nrow = " ++ show m ++ ", ncol = " ++ show n ++ ")\n"
   where
-    (m,n) = dimMatrix a
+    (m,n) = M.dim a
 
 hPutVector :: (Show a, Storable a) => Handle -> String -> Vector a -> IO ()
 hPutVector h name x =
-    hPutList h name $ elemsVector x
+    hPutList h name $ V.elems x
 
 hPutList :: (Show a) => Handle -> String -> [a] -> IO ()
 hPutList h name xs = do

@@ -7,6 +7,8 @@ module Fit (
 import Data.List( foldl', nub, sort, (\\) )
 import Debug.Trace( trace )
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
 
 import Types
 import History( History )
@@ -36,14 +38,14 @@ fromMessagesWithFixed fixed m0 mhs = let
     notfixed = [ 0..Vars.dim v - 1 ] \\ fixed
     beta0 = Model.coefs m0
     xdim = length notfixed
-    x0 = listVector xdim [ atVector beta0 i | i <- notfixed ]
-    fdf x = let beta = replaceVector beta0 $ zip notfixed (elemsVector x)
+    x0 = V.fromList xdim [ V.at beta0 i | i <- notfixed ]
+    fdf x = let beta = V.update beta0 $ zip notfixed (V.elems x)
                 m = Model.fromVars v beta $ Model.loops m0
                 ll = LogLik.fromMessages m mhs
                 (val,grad) = LogLik.valueGrad ll
-                gradx = listVector xdim [ atVector grad i | i <- notfixed ]
+                gradx = V.fromList xdim [ V.at grad i | i <- notfixed ]
             in ( -val
-               , scaleVector (-1) gradx
+               , V.scale (-1) gradx
                , ll
                )
     penalty0 = 1e-1 / (fromIntegral $ Summary.count smry)
@@ -57,12 +59,12 @@ optWithPenalty :: Double
                          (Result a)
 optWithPenalty penalty fdf x0 (f0,df0,a0) = let
     f' x = let (f,df,a) = fdf x
-           in  ( f + 0.5 * penalty * x `dotVector` x
-               , addVectorWithScales 1 df penalty x
+           in  ( f + 0.5 * penalty * x `V.dot` x
+               , V.addWithScale penalty x df 
                , a
                )
-    f0'  = f0 + 0.5 * penalty * x0 `dotVector` x0
-    df0' = addVectorWithScales 1 df0 penalty x0
+    f0'  = f0 + 0.5 * penalty * x0 `V.dot` x0
+    df0' = V.addWithScale penalty x0 df0
     
     opt = BFGS.minimize BFGS.defaultControl{
                                 BFGS.linesearchControl =
@@ -85,8 +87,8 @@ optWithPenalty penalty fdf x0 (f0,df0,a0) = let
         x  = BFGS.resultPos r
         f  = BFGS.resultValue r
         df = BFGS.resultGrad r
-        in r{ BFGS.resultValue = f - 0.5 * penalty * x `dotVector` x
-            , BFGS.resultGrad  = addVectorWithScales 1 df (-penalty) x
+        in r{ BFGS.resultValue = f - 0.5 * penalty * x `V.dot` x
+            , BFGS.resultGrad  = V.addWithScale (-penalty) x df
             }
 
 optWithPenaltyShrink :: Double
@@ -101,9 +103,9 @@ optWithPenaltyShrink = go Nothing
         report r =
             trace ("\n\npenalty: " ++ (show $ penalty0)
                    ++ "\nvalue: " ++ show (BFGS.resultValue r)
-                   ++ "\ngrad norm: " ++ show (norm2Vector $ BFGS.resultGrad r)
-                   ++ "\ngrad: " ++ show (elemsVector $ BFGS.resultGrad r)
-                   ++ "\nposition: " ++ show (elemsVector $ BFGS.resultPos r)
+                   ++ "\ngrad norm: " ++ show (V.norm2 $ BFGS.resultGrad r)
+                   ++ "\ngrad: " ++ show (V.elems $ BFGS.resultGrad r)
+                   ++ "\nposition: " ++ show (V.elems $ BFGS.resultPos r)
                    ++ "\n\n")
         in case optWithPenalty penalty0 fdf x0 fdf0 of
             Left (w,r) -> report r prev

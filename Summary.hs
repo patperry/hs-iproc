@@ -14,6 +14,8 @@ import Data.List( foldl' )
 import Data.Map( Map )
 import qualified Data.Map as Map
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
 
 import History( History )
 import qualified History as History
@@ -40,7 +42,7 @@ data SenderSummary =
 varsSumSS :: SenderSummary -> Vector Double
 varsSumSS ss = let
     rws = [ (r, fromIntegral w) | (r,w) <- Map.assocs rc ]
-    in accumVector (+) (Vars.weightReceiverBy rws v h0 s) (Map.assocs ovc)
+    in V.accum (+) (Vars.weightReceiverBy rws v h0 s) (Map.assocs ovc)
   where
     v = senderVars ss
     s = sender ss
@@ -79,8 +81,8 @@ data Summary = Summary { vars :: !Vars
 
 varsSum :: Summary -> Vector Double
 varsSum s =
-    sumVector (Vars.dim $ vars s)
-              (map varsSumSS (Map.elems $ senderSummary s))
+    V.sum (Vars.dim $ vars s)
+          (map varsSumSS (Map.elems $ senderSummary s))
 
 counts :: Summary -> [((SenderId,ReceiverId), Int)]
 counts smry = concat

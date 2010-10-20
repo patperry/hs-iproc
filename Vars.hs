@@ -33,6 +33,8 @@ import Data.Map( Map )
 import qualified Data.Map as Map
 import Data.Maybe( catMaybes )
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
 
 import History( History )
 import Indices( Indices )
@@ -68,10 +70,10 @@ fromActors sm rm sint rint
     | otherwise = let
         six = Indices.fromAscList $ Map.keys sm
         rix = Indices.fromAscList $ Map.keys rm
-        ssd = (dimVector . snd . Map.findMin) sm
-        srd = (dimVector . snd . Map.findMin) rm
-        smat = colListMatrix (ssd, Map.size sm) $ Map.elems sm
-        rmat = colListMatrix (srd, Map.size rm) $ Map.elems rm
+        ssd = (V.dim . snd . Map.findMin) sm
+        srd = (V.dim . snd . Map.findMin) rm
+        smat = M.fromCols (ssd, Map.size sm) $ Map.elems sm
+        rmat = M.fromCols (srd, Map.size rm) $ Map.elems rm
         dd = Intervals.size sint + Intervals.size rint
         smd = (ssd, srd)
         d = dd + ssd * srd
@@ -112,34 +114,34 @@ validSender v s = Indices.member s (senderIndices v)
 
 weightReceiverBy :: [(ReceiverId, Double)] -> Vars -> History -> SenderId -> Vector Double
 weightReceiverBy rws v h s = let
-    w = runVector $ do
-            mw <- newVector (receiverCount v) 0
+    w = V.create $ do
+            mw <- V.new (receiverCount v) 0
             forM_ rws $ \(r,wt) ->
-                modifyVector mw (receiverIndex v r) (wt+)
+                V.modify mw (receiverIndex v r) (wt+)
             return mw
-    y = mulMatrixVector NoTrans (receiverMatrix v) w
-    x = colMatrix (senderMatrix v) (senderIndex v s)
-    in concatVectors 
-           [ accumVector (+) (constantVector (dynamicDim v) 0) $
-                 [ (i, atVector w (unsafeReceiverIndex v r) * d)
+    y = M.mulVector NoTrans (receiverMatrix v) w
+    x = M.col (senderMatrix v) (senderIndex v s)
+    in V.concat
+           [ V.accum (+) (V.constant (dynamicDim v) 0) $
+                 [ (i, V.at w (unsafeReceiverIndex v r) * d)
                  | (r, ds) <- senderChanges v h s
                  , (i, d) <- ds
                  ]
-           , kroneckerVector y x
+           , V.kronecker y x
            ]
 
 weightReceiverChangesBy :: [(ReceiverId, Double)] -> Vars -> History -> SenderId -> [(Int, Double)]
 weightReceiverChangesBy rws v h s = let
-    w = runVector $ do
-            mw <- newVector (receiverCount v) 0
+    w = V.create $ do
+            mw <- V.new (receiverCount v) 0
             forM_ rws $ \(r,wt) ->
-                unsafeModifyVector mw (receiverIndex v r) (wt+)
+                V.unsafeModify mw (receiverIndex v r) (wt+)
             return mw
     
-    weight r = unsafeAtVector w (unsafeReceiverIndex v r)
+    weight r = V.unsafeAt w (unsafeReceiverIndex v r)
     
-    in filter ((/= 0) . snd) $ assocsVector $ 
-           accumVector (+) (constantVector (dynamicDim v) 0) $
+    in filter ((/= 0) . snd) $ V.assocs $ 
+           V.accum (+) (V.constant (dynamicDim v) 0) $
                [ (i, weight r * d)
                | (r, ds) <- senderChanges v h s
                , (i, d) <- ds
@@ -147,50 +149,50 @@ weightReceiverChangesBy rws v h s = let
 
 mulSenderBy :: Vector Double -> Vars -> History -> SenderId -> [(ReceiverId, Double)]
 mulSenderBy beta v h s
-    | dimVector beta /= dim v = error "dimension mismatch"
+    | V.dim beta /= dim v = error "dimension mismatch"
     | otherwise = let
-        beta1 = dropVector (dynamicDim v) beta
-        beta1_mat = matrixViewVector (staticMatrixDim v) beta1
+        beta1 = V.drop (dynamicDim v) beta
+        beta1_mat = M.fromVector (staticMatrixDim v) beta1
         
-        x = colMatrix (senderMatrix v) (senderIndex v s)
-        xt_beta1 = mulMatrixVector Trans beta1_mat x
-        z = runVector $ do
-                 mz <- newVector_ (receiverCount v)
-                 mulMatrixToVector Trans (receiverMatrix v) xt_beta1 mz
+        x = M.col (senderMatrix v) (senderIndex v s)
+        xt_beta1 = M.mulVector Trans beta1_mat x
+        z = V.create $ do
+                 mz <- V.new_ (receiverCount v)
+                 M.mulVectorTo mz Trans (receiverMatrix v) xt_beta1
                  forM_ (mulSenderChangesBy beta v h s) $ \(r,z1) ->
-                     unsafeModifyVector mz (unsafeReceiverIndex v r) (z1+)
+                     V.unsafeModify mz (unsafeReceiverIndex v r) (z1+)
                  return mz
-        in zip (receivers v) (elemsVector z)
+        in zip (receivers v) (V.elems z)
 
 mulSenderChangesBy :: Vector Double -> Vars -> History -> SenderId -> [(ReceiverId, Double)]
 mulSenderChangesBy  beta v h s
-    | dimVector beta /= dim v = error "dimension mismatch"
+    | V.dim beta /= dim v = error "dimension mismatch"
     | otherwise = let
-        beta0 = takeVector (dynamicDim v) beta
-        in [ (r, foldl' (+) 0 [ d * atVector beta0 i | (i,d) <- delta ])
+        beta0 = V.take (dynamicDim v) beta
+        in [ (r, foldl' (+) 0 [ d * V.at beta0 i | (i,d) <- delta ])
            | (r, delta) <- senderChanges v h s
            ]
 
 mulDyadBy :: Vector Double -> Vars -> History -> SenderId -> ReceiverId -> Double
 mulDyadBy beta v h s r
-    | dimVector beta /= dim v = error "dimension mismatch"
+    | V.dim beta /= dim v = error "dimension mismatch"
     | otherwise = let
-        beta1 = dropVector (dynamicDim v) beta
-        beta1_mat = matrixViewVector (staticMatrixDim v) beta1
+        beta1 = V.drop (dynamicDim v) beta
+        beta1_mat = M.fromVector (staticMatrixDim v) beta1
         
-        x = colMatrix (senderMatrix v) (senderIndex v s)
-        y = colMatrix (receiverMatrix v) (receiverIndex v r)
-        xt_beta1 = mulMatrixVector Trans beta1_mat x
-        z0 = dotVector y xt_beta1
+        x = M.col (senderMatrix v) (senderIndex v s)
+        y = M.col (receiverMatrix v) (receiverIndex v r)
+        xt_beta1 = M.mulVector Trans beta1_mat x
+        z0 = V.dot y xt_beta1
 
         in z0 + mulDyadChangesBy beta v h s r
 
 mulDyadChangesBy :: Vector Double -> Vars -> History -> SenderId -> ReceiverId -> Double
 mulDyadChangesBy beta v h s r
-    | dimVector beta /= dim v = error "dimension mismatch"
+    | V.dim beta /= dim v = error "dimension mismatch"
     | otherwise = let
-        beta0 = takeVector (dynamicDim v) beta
-        in foldl' (+) 0 [ d * atVector beta0 i | (i,d) <- delta s r ]
+        beta0 = V.take (dynamicDim v) beta
+        in foldl' (+) 0 [ d * V.at beta0 i | (i,d) <- delta s r ]
   where
     delta = dyadChanges v h
 
@@ -248,9 +250,9 @@ sender v h s = [ (r, dyad v h s r) | r <- receivers v ]
 
 dyad :: Vars -> History -> SenderId -> ReceiverId -> Vector Double
 dyad v h s r = let
-    x = colMatrix (senderMatrix v) (senderIndex v s)
-    y = colMatrix (receiverMatrix v) (receiverIndex v r)
+    x = M.col (senderMatrix v) (senderIndex v s)
+    y = M.col (receiverMatrix v) (receiverIndex v r)
     delta = dyadChanges v h s r
-    in concatVectors [ accumVector (+) (constantVector (dynamicDim v) 0) delta
-                     , kroneckerVector y x
-                     ]
+    in V.concat [ V.accum (+) (V.constant (dynamicDim v) 0) delta
+                , V.kronecker y x
+                ]

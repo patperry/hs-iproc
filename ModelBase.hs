@@ -35,6 +35,8 @@ module ModelBase (
         
 import Data.List( foldl' )
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
 
 import History( History )
 import Types( SenderId, ReceiverId )
@@ -55,17 +57,17 @@ loops m = if hasLoops m then Loops else NoLoops
 
 fromVars :: Vars -> Vector Double -> Loops -> Model
 fromVars v c l
-    | Vars.dim v /= dimVector c =
+    | Vars.dim v /= V.dim c =
         error "fromVars: dimension mismatch"
     | otherwise =
         Model v c $ case l of { Loops -> True ; NoLoops -> False }
 
 addStep :: Vector Double -> Model -> Model
 addStep step (Model v c hasLoops)
-    | dimVector step /= dimVector c =
+    | V.dim step /= V.dim c =
         error "addStep: dimension mismatch"
     | otherwise =
-        Model v (addVector step c) hasLoops
+        Model v (V.add step c) hasLoops
 
 validDyad :: Model -> SenderId -> ReceiverId -> Bool
 validDyad m s r | hasLoops m = True
@@ -167,6 +169,6 @@ meanCovVars :: Model -> History -> SenderId -> (Vector Double, Herm Matrix Doubl
 meanCovVars m h s = let
     v = vars m
     wxs = [ (w, Vars.dyad v h s r) | (r,w) <- probs m h s ]
-    mu = weightedMeanVector (Vars.dim v) wxs
-    sigma = weightedCovMatrixWithMean mu MLCov wxs
+    mu = V.weightedMean (Vars.dim v) wxs
+    sigma = M.weightedCovWithMean mu MLCov wxs
     in (mu, sigma)

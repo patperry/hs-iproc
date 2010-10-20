@@ -18,6 +18,8 @@ import Test.QuickCheck hiding ( vector )
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.LinearAlgebra as Test
 import Numeric.LinearAlgebra
+import qualified Numeric.LinearAlgebra.Matrix as M
+import qualified Numeric.LinearAlgebra.Vector as V
 
 import History( History )
 import EventSet( EventSet )
@@ -139,7 +141,7 @@ instance Arbitrary ActorsWithVectors where
         return $ ActorsWithVectors (Map.fromList $ zip ss xs)
                                    (Map.fromList $ zip rs ys)
       where
-        testVector p = listVector p `fmap` replicateM p (choose (-1,1))
+        testVector p = V.fromList p `fmap` replicateM p (choose (-1,1))
 
 instance Arbitrary Vars where
     arbitrary = do
@@ -199,7 +201,7 @@ instance Arbitrary Model where
     arbitrary = do
         v <- arbitrary
         let p = Vars.dim v
-        c <- listVector p `fmap` replicateM p (choose (-1,1))
+        c <- V.fromList p `fmap` replicateM p (choose (-1,1))
         l <- elements [ Model.Loops, Model.NoLoops ]
         return $ Model.fromVars v c l
 
@@ -437,17 +439,17 @@ prop_Vars_dyad_fromActors_static (ActorsWithVectors sxs rys) sint rint = let
     h = History.empty
     in and [ Vars.dyad v h s r
                  ===
-                 concatVectors [ constantVector d 0
-                               , listVector (p*q)
-                                            [ xi * yj | yj <- elemsVector y
-                                                      , xi <- elemsVector x ]
-                               ]
+                 V.concat [ V.constant d 0
+                          , V.fromList (p*q)
+                                       [ xi * yj | yj <- V.elems y
+                                                 , xi <- V.elems x ]
+                          ]
            | (s,x) <- Map.assocs sxs
            , (r,y) <- Map.assocs rys
            ]
   where
-    p = (dimVector . snd . Map.findMin) sxs
-    q = (dimVector . snd . Map.findMin) rys
+    p = (V.dim . snd . Map.findMin) sxs
+    q = (V.dim . snd . Map.findMin) rys
     d = Intervals.size sint + Intervals.size rint
     
 prop_Vars_sender_fromActors_static (ActorsWithVectors sxs rys) sint rint = let
@@ -495,7 +497,7 @@ prop_Vars_senderChanges (VarsWithHistory v h) =
 prop_Vars_dyad (VarsWithHistory v h) =
     and [ Vars.dyad v h s r
               ===
-              accumVector (+) (Vars.dyad v h0 s r) (Vars.dyadChanges v h s r)
+              V.accum (+) (Vars.dyad v h0 s r) (Vars.dyadChanges v h s r)
         | s <- Vars.senders v
         , r <- Vars.receivers v
         ]
@@ -515,7 +517,7 @@ prop_Vars_mulDyadBy (VarsWithHistory v h) =
     forAll (Test.vector $ Vars.dim v) $ \beta ->
         and [ Vars.mulDyadBy beta v h s r
                   ~==
-                  dotVector (Vars.dyad v h s r) beta
+                  V.dot (Vars.dyad v h s r) beta
             | s <- Vars.senders v
             , r <- Vars.receivers v
             ]
@@ -524,7 +526,7 @@ prop_Vars_mulSenderBy (VarsWithHistory v h) =
     forAll (Test.vector $ Vars.dim v) $ \beta ->
         and [ Vars.mulSenderBy beta v h s
                   ~==
-                  [ (r, dotVector x beta) | (r,x) <- Vars.sender v h s ]
+                  [ (r, V.dot x beta) | (r,x) <- Vars.sender v h s ]
             | s <- Vars.senders v
             ]
 
@@ -537,7 +539,7 @@ prop_Vars_weightReceiverBy (VarsWithHistory v h) =
     flip all (Vars.senders v) $ \s ->
         Vars.weightReceiverBy rws v h s
             `verboseAEq`
-            weightedSumVector (Vars.dim v)
+            V.weightedSum (Vars.dim v)
                 [ (w, Vars.dyad v h s r) | (r,w) <- rws ]
 
 prop_Vars_weightReceiverChangesBy (VarsWithHistory v h) =
@@ -547,11 +549,11 @@ prop_Vars_weightReceiverChangesBy (VarsWithHistory v h) =
                 ws <- replicateM k arbitrary
                 return $ zip rs ws) $ \rws ->
     flip all (Vars.senders v) $ \s ->
-    flip all (assocsVector $ Vars.weightReceiverBy rws v h s) $ \(i,d) ->
+    flip all (V.assocs $ Vars.weightReceiverBy rws v h s) $ \(i,d) ->
         let x0 = Vars.weightReceiverBy rws v History.empty s
         in case (lookup i (Vars.weightReceiverChangesBy rws v h s)) of
-              Just d' -> d ~== d' + atVector x0 i
-              Nothing -> d ~== atVector x0 i
+              Just d' -> d ~== d' + V.at x0 i
+              Nothing -> d ~== V.at x0 i
 
 tests_Model = testGroup "Model"
     [ testProperty "logWeight (static)" prop_Model_logWeight_static
@@ -735,7 +737,7 @@ prop_Model_meanVars_static m =
     flip all (Model.senders m) $ \s ->
         Model.meanVars m h s
             `verboseAEq`
-            weightedMeanVector (Vars.dim v)
+            V.weightedMean (Vars.dim v)
                                [ (Model.prob m h s r, x)
                                | (r,x) <- Vars.sender v h s
                                ]
@@ -747,7 +749,7 @@ prop_Model_meanVars (ModelWithHistory m h) =
     flip all (Model.senders m) $ \s ->
         Model.meanVars m h s
             `verboseAEq`
-            weightedMeanVector (Vars.dim v)
+            V.weightedMean (Vars.dim v)
                                [ (Model.prob m h s r, x)
                                | (r,x) <- Vars.sender v h s
                                ]
@@ -758,13 +760,13 @@ prop_Model_covVars_static m =
     forAll (Test.vector $ Vars.dim v) $ \z ->
     flip all (Model.senders m) $ \s ->
         let cov  = Model.covVars m h s
-            cov' = weightedCovMatrix (Vars.dim v) MLCov
+            cov' = M.weightedCov (Vars.dim v) MLCov
                                     [ (Model.prob m h s r, x)
                                     | (r,x) <- Vars.sender v h s
                                     ]
         in
-            mulHermMatrixVector cov z
-                ~== mulHermMatrixVector cov' z
+            M.hermMulVector cov z
+                ~== M.hermMulVector cov' z
   where
     h = History.empty
     v = Model.vars m
@@ -773,13 +775,13 @@ prop_Model_covVars (ModelWithHistory m h) =
     forAll (Test.vector $ Vars.dim v) $ \z ->
     flip all (Model.senders m) $ \s ->
         let cov  = Model.covVars m h s
-            cov' = weightedCovMatrix (Vars.dim v) MLCov
+            cov' = M.weightedCov (Vars.dim v) MLCov
                                     [ (Model.prob m h s r, x)
                                     | (r,x) <- Vars.sender v h s
                                     ]
         in
-            mulHermMatrixVector cov z
-                ~== mulHermMatrixVector cov' z
+            M.hermMulVector cov z
+                ~== M.hermMulVector cov' z
   where
     v = Model.vars m
 
@@ -831,8 +833,8 @@ prop_LogLik_doubleton_deviance (ModelWithMessageAndHistory2 m mh1 mh2) = let
 prop_LogLik_singleton_score_static (ModelWithMessage m msg) =
     LogLik.score (LogLik.fromMessages m [(msg,h)])
         `verboseAEq`
-             (scaleVector (sqrt n) $
-                 meanVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
+             (V.scale (sqrt n) $
+                 V.mean (Vars.dim v) [ Vars.dyad v h s r `V.sub` mu
                                          | r <- rs 
                                          ])
   where
@@ -847,7 +849,10 @@ prop_LogLik_doubleton_score_static (ModelWithMessage2 m msg1 msg2) = let
     score1 = LogLik.score $ LogLik.fromMessages m [(msg1,h)]
     score2 = LogLik.score $ LogLik.fromMessages m [(msg2,h)]
     score = LogLik.score $ LogLik.fromMessages m [(msg1,h), (msg2,h)]
-    in score ~== addVectorWithScales (sqrt (n1/n)) score1 (sqrt (n2/n)) score2
+    in score ~== V.weightedSum (V.dim score1)
+                               [ (sqrt (n1/n), score1)
+                               , (sqrt (n2/n), score2)
+                               ]
   where
     n1 = fromIntegral $ length $ messageTo msg1
     n2 = fromIntegral $ length $ messageTo msg2
@@ -856,8 +861,8 @@ prop_LogLik_doubleton_score_static (ModelWithMessage2 m msg1 msg2) = let
 
 prop_LogLik_singleton_score (ModelWithMessageAndHistory m (msg,h)) =
     LogLik.score (LogLik.fromMessages m [(msg,h)])
-        `verboseAEq` (scaleVector (sqrt n) $
-                 meanVector (Vars.dim v) [ Vars.dyad v h s r `subVector` mu
+        `verboseAEq` (V.scale (sqrt n) $
+                 V.mean (Vars.dim v) [ Vars.dyad v h s r `V.sub` mu
                                          | r <- rs 
                                          ])
   where
@@ -871,7 +876,10 @@ prop_LogLik_doubleton_score (ModelWithMessageAndHistory2 m mh1 mh2) = let
     score1 = LogLik.score $ LogLik.fromMessages m [ mh1 ]
     score2 = LogLik.score $ LogLik.fromMessages m [ mh2 ]
     score = LogLik.score $ LogLik.fromMessages m [ mh1, mh2 ]
-    in score `verboseAEq` addVectorWithScales (sqrt (n1/n)) score1 (sqrt (n2/n)) score2
+    in score `verboseAEq` (V.weightedSum (V.dim score1)
+                                         [ (sqrt (n1/n), score1)
+                                         , (sqrt (n2/n), score2)
+                                         ])
   where
     n1 = fromIntegral $ length $ messageTo $ fst mh1
     n2 = fromIntegral $ length $ messageTo $ fst mh2
